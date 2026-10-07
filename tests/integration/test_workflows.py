@@ -12,9 +12,10 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from app_options import TelescopeProfile
-from test_astro_collimator import FakeCapture, GuiTests
-from test_feature_detection import optical_fixture, pupil_fixture
+from source.app_options import TelescopeProfile
+from tests.fixtures.camera import FakeCapture
+from tests.integration.test_app import GuiTests
+from tests.fixtures.images import TEST_IMAGES, optical_fixture, pupil_fixture
 
 
 class WorkflowTests(GuiTests):
@@ -110,7 +111,7 @@ class WorkflowTests(GuiTests):
                 self.assertEqual(app.options_store.path.read_bytes(), before)
                 dialog.variables[field].set(old)
         dialog.variables["name"].set("New é")
-        with patch("app_options.os.replace", side_effect=PermissionError("Locked file")):
+        with patch("source.app_options.os.replace", side_effect=PermissionError("Locked file")):
             dialog.save()
         self.assertIn("Locked", dialog.error.get())
         self.assertEqual(app.options_store.path.read_bytes(), before)
@@ -152,7 +153,7 @@ class WorkflowTests(GuiTests):
             "post-333184-0-47945200-1591447543.jpeg": {"Focuser edge": (145, 3)},
         }
         checked = 0
-        for path in sorted(Path(__file__).with_name("lox").iterdir()):
+        for path in sorted(TEST_IMAGES.iterdir()):
             if path.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
                 continue
             with self.subTest(photo=path.name):

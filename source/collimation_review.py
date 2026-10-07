@@ -12,13 +12,13 @@ from tkinter import filedialog, messagebox, ttk
 import cv2
 import numpy as np
 
-from app_options import OptionsStore, TelescopeProfile
-from feature_detection import (DetectionResult, EdgeCandidate, FEATURE_NAMES,
+from .app_options import OptionsStore, TelescopeProfile
+from .feature_detection import (DetectionResult, EdgeCandidate, FEATURE_NAMES,
                                FEATURE_COLORS, required_features, accepts_reference, SOFT_EDGE_WIDTH, analyze_frame, concentric_guides, circle_from_points)
-from setup_dialog import SetupDialog
-from edge_tracking import merge_tracking
-from collimation_guidance import alignment_advice
-from live_detection import SteadyFrameAverage, can_track_locally, detect_live
+from .setup_dialog import SetupDialog
+from .edge_tracking import merge_tracking
+from .collimation_guidance import alignment_advice
+from .live_detection import SteadyFrameAverage, can_track_locally, detect_live
 
 
 class ReviewTools:

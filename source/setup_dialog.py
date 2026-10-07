@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from app_options import CENTER_MARK_SHAPES, TelescopeProfile
+from .app_options import CENTER_MARK_SHAPES, TelescopeProfile
 
 
 PROFILE_FIELDS = (

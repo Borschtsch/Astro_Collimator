@@ -1,9 +1,13 @@
 """Explicit app-workflow validation; never discovers or runs unit test classes."""
 
+import sys
+from pathlib import Path
 import unittest
 
-from test_astro_collimator import GuiTests
-from test_integration_workflows import WorkflowTests
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.integration.test_app import GuiTests
+from tests.integration.test_workflows import WorkflowTests
 
 
 def suite():

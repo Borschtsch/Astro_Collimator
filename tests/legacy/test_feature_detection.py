@@ -5,32 +5,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from feature_detection import (DisplayTransform, EdgeCandidate, DetectionResult, FEATURE_NAMES, _analyze_observations as analyze_frame,
+from source.feature_detection import (DisplayTransform, EdgeCandidate, DetectionResult, FEATURE_NAMES, _analyze_observations as analyze_frame,
                                as_focuser_circle, circle_from_points, draw_detection)
 
 
-def optical_fixture(size=(800, 600), ellipse=False, triangle=False, circular_focuser=False):
-    frame = np.full((600, 800, 3), 25, dtype=np.uint8)
-    for center, radius, value in (((400, 300), 250, 120), ((412, 296), 200, 40),
-                                  ((418, 300), 160, 190)):
-        oval = ellipse and not (circular_focuser and radius == 250)
-        cv2.ellipse(frame, center, (radius, round(radius * 0.85) if oval else radius),
-                    18 if oval else 0, 0, 360, (value,) * 3, -1, cv2.LINE_AA)
-    if triangle:
-        cv2.fillPoly(frame, [np.array([[421, 290], [410, 310], [432, 310]])], (20,) * 3, cv2.LINE_AA)
-    else:
-        cv2.circle(frame, (421, 302), 10, (20,) * 3, -1, cv2.LINE_AA)
-    return cv2.resize(frame, size)
-
-
-def pupil_fixture(size=(800, 600), mark=True, opening=True):
-    frame = optical_fixture()
-    cv2.circle(frame, (405, 285), 36, (24,) * 3, -1, cv2.LINE_AA)
-    if opening:
-        cv2.circle(frame, (405, 285), 12, (160,) * 3, -1, cv2.LINE_AA)
-    if mark:
-        cv2.circle(frame, (447, 330), 7, (10,) * 3, 2, cv2.LINE_AA)
-    return cv2.resize(frame, size)
+from tests.fixtures.images import TEST_IMAGES, optical_fixture, pupil_fixture
 
 
 class DetectionTests(unittest.TestCase):
@@ -301,7 +280,7 @@ class DetectionTests(unittest.TestCase):
 
 class LocalImageTests(unittest.TestCase):
     """Optional user-supplied photos; no downloads or image modifications."""
-    folder = Path(__file__).parent / "lox"
+    folder = TEST_IMAGES
 
     @unittest.skipUnless((folder / "images.jpg").exists(), "Local telescope example is absent")
     def test_spider_divided_primary_seeds_the_actual_rims_instead_of_ghosts(self):
@@ -431,7 +410,7 @@ class LocalImageTests(unittest.TestCase):
 
 class SharedCircleGuideTests(unittest.TestCase):
     def test_round_shared_guides_retain_original_independent_observations(self):
-        from feature_detection import analyze_frame as analyze_guides
+        from source.feature_detection import analyze_frame as analyze_guides
         result = analyze_guides(optical_fixture(ellipse=True, circular_focuser=True))
         focuser = result.candidate(result.suggested["Focuser edge"])
         self.assertEqual(result.guide_master_id, focuser.id)
@@ -446,7 +425,7 @@ class SharedCircleGuideTests(unittest.TestCase):
         self.assertTrue(any(edge.axes[0] != edge.axes[1] for edge in result.observations))
 
     def test_master_is_focuser_else_largest_boundary(self):
-        from feature_detection import concentric_guides
+        from source.feature_detection import concentric_guides
         small = EdgeCandidate(1, (180, 200), (50, 40), 30)
         large = EdgeCandidate(2, (220, 210), (100, 95), 20)
         result = DetectionResult((400, 400), (small, large), {"Primary reflection": 1}, (), 0)
@@ -458,7 +437,7 @@ class SharedCircleGuideTests(unittest.TestCase):
         self.assertEqual({edge.center for edge in focuser.candidates}, {small.center})
 
     def test_recenter_preserves_radii_and_originals_and_rejects_invalid_centers(self):
-        from feature_detection import analyze_frame as analyze_guides, concentric_guides
+        from source.feature_detection import analyze_frame as analyze_guides, concentric_guides
         result = analyze_guides(optical_fixture())
         moved = concentric_guides(result, (-1000, 2000))
         self.assertEqual(moved.guide_center, (0, 599))
@@ -469,8 +448,8 @@ class SharedCircleGuideTests(unittest.TestCase):
                 concentric_guides(result, point)
 
     def test_every_local_photo_produces_only_concentric_circular_guides(self):
-        from feature_detection import analyze_frame as analyze_guides
-        folder = Path(__file__).parent / "lox"
+        from source.feature_detection import analyze_frame as analyze_guides
+        folder = TEST_IMAGES
         photos = list(folder.iterdir()) if folder.exists() else []
         if not photos:
             self.skipTest("Local photos are absent")
@@ -485,7 +464,7 @@ class SharedCircleGuideTests(unittest.TestCase):
                 self.assertTrue(all(edge.axes[0] == edge.axes[1] and edge.eccentricity == 0 for edge in result.candidates))
 
     def test_empty_image_does_not_invent_guides_or_a_master(self):
-        from feature_detection import analyze_frame as analyze_guides
+        from source.feature_detection import analyze_frame as analyze_guides
         result = analyze_guides(np.full((400, 400, 3), 25, np.uint8))
         self.assertFalse(result.candidates)
         self.assertIsNone(result.guide_center)

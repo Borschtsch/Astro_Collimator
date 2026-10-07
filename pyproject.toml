@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astro-collimator"
+dynamic = ["version"]
+description = "Offline collimation assistance for Newtonian telescopes"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python>=4.10,<6",
+    "Pillow>=10,<13",
+    "numpy>=1.26,<3",
+]
+
+[tool.setuptools.packages.find]
+include = ["source*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "source.__version__"}

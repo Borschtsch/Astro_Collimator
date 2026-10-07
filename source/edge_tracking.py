@@ -3,7 +3,7 @@
 from dataclasses import dataclass, replace
 import math
 
-from feature_detection import concentric_guides, SOFT_EDGE_WIDTH, accepts_reference
+from .feature_detection import concentric_guides, SOFT_EDGE_WIDTH, accepts_reference
 
 
 @dataclass(frozen=True)

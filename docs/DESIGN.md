@@ -183,20 +183,21 @@ controls. Padding and concise help preserve 1280x720 and 1024x768 layouts.
 
 ## Saved data and architecture
 
-options.json beside the prototype stores telescope name, aperture/focal length,
+options.json beside start.py (source) or the portable executable stores telescope name, aperture/focal length,
 secondary minor axis, focuser diameter, known offset, mark shape, camera description
 and mounting notes. Optional numeric values must be finite and physically valid.
 Options are saved atomically via a flushed temporary file and os.replace.
 Telescope parameters are not sufficient to derive apparent pixel radii without
 camera geometry; current advice does not use them to infer millimeters.
 
-- astro_collimator.py: app shell, camera ownership, display transforms and gestures.
-- collimation_review.py: role editing, analysis scheduling and capture import/export.
-- feature_detection.py: observation fitting, role proposals and concentric projection.
-- edge_tracking.py: bounded manual-reference matching and retention.
-- collimation_guidance.py: pure provisional next-action advice from observations.
-- app_options.py / setup_dialog.py: validated saved telescope setup.
-- camera_properties.py: Windows capability queries and supported control ranges.
+- start.py / source/launcher.py: shared source and packaged entry.
+- source/app.py: app shell, camera ownership, display transforms and gestures.
+- source/collimation_review.py: role editing, analysis scheduling and capture import/export.
+- source/feature_detection.py: observation fitting, role proposals and concentric projection.
+- source/edge_tracking.py: bounded manual-reference matching and retention.
+- source/collimation_guidance.py: pure provisional next-action advice from observations.
+- source/app_options.py / setup_dialog.py: validated saved telescope setup.
+- source/camera_properties.py: Windows capability queries and supported control ranges.
 
 Analysis resizes to at most 960 pixels on the longest side and returns raw image
 coordinates. CLAHE, blur, Canny, contours/arcs and radial intensity fitting generate
@@ -233,7 +234,7 @@ rendering and capture export. Hardware-boundary capture substitutes are permitte
 use real production components and native photos for the rest. Historical unit
 results below document earlier work and are not the current validation workflow.
 The same behavioral/failure-case coverage is required. Use the explicit runner
-`python -B run_integration_tests.py`; [INTEGRATION_COVERAGE.md](INTEGRATION_COVERAGE.md)
+`python -B scripts/test_integration.py`; [INTEGRATION_COVERAGE.md](INTEGRATION_COVERAGE.md)
 maps previous categories and gaps. Equivalent coverage is not yet certified.
 
 Historical baseline and coverage (superseded validation command):

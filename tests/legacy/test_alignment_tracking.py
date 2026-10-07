@@ -1,10 +1,10 @@
 from dataclasses import replace
 import unittest
 
-from app_options import TelescopeProfile
-from collimation_guidance import alignment_advice
-from edge_tracking import merge_tracking
-from feature_detection import DetectionResult, EdgeCandidate, FEATURE_NAMES, concentric_guides
+from source.app_options import TelescopeProfile
+from source.collimation_guidance import alignment_advice
+from source.edge_tracking import merge_tracking
+from source.feature_detection import DetectionResult, EdgeCandidate, FEATURE_NAMES, concentric_guides
 
 
 def measured_view(shift=(0, 0)):

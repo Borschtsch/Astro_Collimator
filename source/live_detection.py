@@ -8,7 +8,7 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-from feature_detection import (DetectionResult, EdgeCandidate, SOFT_EDGE_WIDTH,
+from .feature_detection import (DetectionResult, EdgeCandidate, SOFT_EDGE_WIDTH,
                                _fit_contour, _rim_evidence, concentric_guides)
 
 

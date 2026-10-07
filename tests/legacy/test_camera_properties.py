@@ -2,7 +2,7 @@ import ctypes as ct
 import sys
 import unittest
 
-from camera_properties import (
+from source.camera_properties import (
     CAMERA_CONTROL, GUID_PTR, HRESULT, LONG, LONG_PTR, ULONG, VOID, VOID_PTR,
     PropertyInfo, _device_filter, _read_interface_properties,
 )

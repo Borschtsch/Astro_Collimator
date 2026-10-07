@@ -14,220 +14,11 @@ import cv2
 import numpy as np
 from PIL import ImageTk
 
-from astro_collimator import CameraWorker, WebcamApp, prepare_frame
-from camera_properties import PropertyInfo
-from app_options import OptionsStore, TelescopeProfile
-from test_feature_detection import optical_fixture
-
-
-class FakeCapture:
-    def __init__(self, index, opened=True, read_ok=True, setting="accept"):
-        self.index = index
-        self.opened = opened
-        self.read_ok = read_ok
-        self.setting = setting
-        self.released = False
-        self.owner = threading.get_ident()
-        self.values = {cv2.CAP_PROP_GAIN: 500.5, cv2.CAP_PROP_EXPOSURE: 12.25}
-        self.set_calls = []
-        self.frame = np.zeros((90, 160, 3), dtype=np.uint8)
-
-    def check_owner(self):
-        if self.owner != threading.get_ident():
-            raise AssertionError("Camera accessed from another thread")
-
-    def isOpened(self):
-        self.check_owner()
-        return self.opened and not self.released
-
-    def get(self, prop):
-        self.check_owner()
-        return self.values.get(prop, 0)
-
-    def set(self, prop, value):
-        self.check_owner()
-        self.set_calls.append((prop, value))
-        if self.setting == "reject":
-            return False
-        if self.setting == "error":
-            raise cv2.error("Unsupported property")
-        self.values[prop] = min(value, 20) if self.setting == "clamp" else value
-        return True
-
-    def read(self):
-        self.check_owner()
-        if self.released:
-            raise AssertionError("Read after release")
-        return self.read_ok, self.frame.copy() if self.read_ok else None
-
-    def release(self):
-        self.check_owner()
-        self.released = True
-
-
-class WorkerTests(unittest.TestCase):
-    def start_worker(self, factory, capability_provider=None):
-        worker = CameraWorker(factory, max_cameras=4, capability_provider=capability_provider)
-        worker.start()
-        self.addCleanup(self.stop_worker, worker)
-        return worker
-
-    def stop_worker(self, worker):
-        worker.stop_event.set()
-        worker.join(2)
-        self.assertFalse(worker.is_alive())
-
-    def event(self, worker, kind):
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            session, actual_kind, data = worker.events.get(timeout=2)
-            if actual_kind == kind:
-                return session, data
-        self.fail(f"Missing {kind} event")
-
-    def test_discovery_checks_gaps_and_releases_all_probes(self):
-        captures = []
-
-        def factory(index):
-            cap = FakeCapture(index, opened=index in (0, 2))
-            captures.append(cap)
-            return cap
-
-        worker = self.start_worker(factory)
-        worker.commands.put((1, "scan", None))
-        session, cameras = self.event(worker, "cameras")
-        self.assertEqual((session, cameras), (1, [0, 2]))
-        self.assertEqual(len(captures), 4)
-        self.assertTrue(all(cap.released for cap in captures))
-
-    def test_open_failure_and_disconnect_release_device(self):
-        captures = []
-
-        def factory(index):
-            cap = FakeCapture(index, opened=index != 0, read_ok=False)
-            captures.append(cap)
-            return cap
-
-        worker = self.start_worker(factory)
-        worker.commands.put((1, "open", 0))
-        self.assertIn("Failed to open", self.event(worker, "error")[1])
-        worker.commands.put((2, "open", 1))
-        self.event(worker, "opened")
-        self.assertEqual(self.event(worker, "disconnected")[0], 2)
-        self.assertTrue(all(cap.released for cap in captures))
-
-    def test_switches_and_properties_stay_on_one_thread(self):
-        captures = []
-
-        def factory(index):
-            cap = FakeCapture(index)
-            captures.append(cap)
-            return cap
-
-        worker = self.start_worker(factory)
-        worker.commands.put((1, "open", 0))
-        self.event(worker, "opened")
-        for session in range(2, 12):
-            worker.commands.put((session, "open", session))
-        worker.commands.put((1, "set", (cv2.CAP_PROP_GAIN, 99)))
-        worker.commands.put((11, "set", (cv2.CAP_PROP_GAIN, 123.5)))
-        session, (prop, actual, message) = self.event(worker, "property")
-        self.assertEqual((session, actual), (11, 123.5))
-        self.assertTrue(all(cap.released for cap in captures[:-1]))
-        self.assertTrue(all(not cap.set_calls for cap in captures[:-1]))
-        self.assertEqual(captures[-1].set_calls, [(cv2.CAP_PROP_GAIN, 123.5)])
-        self.assertEqual(len({cap.owner for cap in captures}), 1)
-        self.stop_worker(worker)
-        self.assertTrue(captures[-1].released)
-
-    def test_rejected_clamped_and_exceptional_controls(self):
-        for setting, expected in (("reject", "rejected"), ("clamp", "adjusted or ignored"),
-                                  ("error", "operation failed")):
-            with self.subTest(setting=setting):
-                worker = self.start_worker(lambda index: FakeCapture(index, setting=setting))
-                worker.commands.put((1, "open", 0))
-                self.event(worker, "opened")
-                worker.commands.put((1, "set", (cv2.CAP_PROP_GAIN, 100)))
-                _, data = self.event(worker, "error" if setting == "error" else "property")
-                self.assertIn(expected, data if isinstance(data, str) else data[2])
-                self.stop_worker(worker)
-
-    def test_shutdown_during_blocked_read_keeps_release_on_owner_thread(self):
-        reading = threading.Event()
-        unblock = threading.Event()
-        captures = []
-
-        class BlockingCapture(FakeCapture):
-            def read(self):
-                reading.set()
-                unblock.wait(2)
-                return super().read()
-
-        def factory(index):
-            cap = BlockingCapture(index)
-            captures.append(cap)
-            return cap
-
-        worker = self.start_worker(factory)
-        worker.commands.put((1, "open", 0))
-        self.assertTrue(reading.wait(2))
-        worker.stop_event.set()
-        self.assertFalse(captures[0].released)
-        unblock.set()
-        self.stop_worker(worker)
-        self.assertTrue(captures[0].released)
-
-    def test_capabilities_are_queried_before_open_and_enforced(self):
-        order = []
-        captures = []
-        ranges = {"Gain": PropertyInfo("supported", 3, 19, 4, 7, 2),
-                  "Zoom": PropertyInfo("unsupported"),
-                  "Focus": PropertyInfo("supported", 0, 100, 1, 50, 1)}
-
-        def query(index):
-            order.append("query")
-            return ranges
-
-        def factory(index):
-            order.append("open")
-            cap = FakeCapture(index)
-            captures.append(cap)
-            return cap
-
-        worker = self.start_worker(factory, query)
-        worker.commands.put((1, "open", 0))
-        _, (values, capabilities) = self.event(worker, "opened")
-        self.assertEqual(order, ["query", "open"])
-        self.assertEqual(capabilities[cv2.CAP_PROP_GAIN], ranges["Gain"])
-        self.assertEqual(captures[0].set_calls, [])
-        for prop in (cv2.CAP_PROP_ZOOM, cv2.CAP_PROP_FOCUS):
-            worker.commands.put((1, "set", (prop, 50)))
-            self.assertIn("unavailable", self.event(worker, "property")[1][2])
-        worker.commands.put((1, "set", (cv2.CAP_PROP_GAIN, 14)))
-        self.assertEqual(self.event(worker, "property")[1][1], 15)
-        self.assertEqual(captures[0].set_calls, [(cv2.CAP_PROP_GAIN, 15)])
-
-
-class FrameTests(unittest.TestCase):
-    def test_aspect_ratio_and_color_are_preserved(self):
-        for height, width in ((720, 1280), (480, 640), (1280, 720)):
-            for zoom in (1, 2, 3):
-                with self.subTest(size=(width, height), zoom=zoom):
-                    frame = np.zeros((height, width, 3), dtype=np.uint8)
-                    frame[:, :] = (10, 20, 30)
-                    result = prepare_frame(frame, zoom, 960, 720)
-                    h, w = result.shape[:2]
-                    self.assertLessEqual(w, 960)
-                    self.assertLessEqual(h, 720)
-                    self.assertAlmostEqual(w / h, width / height, delta=0.01)
-                    np.testing.assert_array_equal(result[h // 2, w // 2], (30, 20, 10))
-
-    def test_zoom_crops_center_instead_of_stretching(self):
-        frame = np.zeros((120, 120, 3), dtype=np.uint8)
-        frame[40:80, 40:80] = (0, 0, 255)
-        result = prepare_frame(frame, 3, 120, 120)
-        self.assertTrue(np.all(result[:, :, 0] == 255))
-        self.assertTrue(np.all(result[:, :, 1:] == 0))
+from source.app import CameraWorker, WebcamApp, prepare_frame
+from source.camera_properties import PropertyInfo
+from source.app_options import OptionsStore, TelescopeProfile
+from tests.fixtures.images import optical_fixture
+from tests.fixtures.camera import FakeCapture
 
 
 class GuiTests(unittest.TestCase):
@@ -245,8 +36,8 @@ class GuiTests(unittest.TestCase):
         elif saved_options is not None:
             self.options_store.path.write_bytes(saved_options)
         root.report_callback_exception = lambda *error: self.callback_errors.append(error)
-        with patch("astro_collimator.open_camera", side_effect=factory), \
-                patch("astro_collimator.query_camera_properties", return_value=capabilities or {}):
+        with patch("source.app.open_camera", side_effect=factory), \
+                patch("source.app.query_camera_properties", return_value=capabilities or {}):
             self.app = WebcamApp(root, self.options_store)
         self.startup_fullscreen = bool(root.attributes("-fullscreen"))
         self.startup_window_state = root.state()
@@ -306,7 +97,7 @@ class GuiTests(unittest.TestCase):
         np.testing.assert_array_equal(app.last_frame, optical_fixture())
 
     def test_changing_detection_messages_keeps_interactive_controls_still(self):
-        from feature_detection import analyze_frame
+        from source.feature_detection import analyze_frame
         app = self.make_app(lambda index: FakeCapture(index, opened=False))
         self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
         app.notebook.select(app.review_panel)
@@ -432,7 +223,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(app.fov_crosshair_center(), (400, 300))
 
     def test_fov_position_survives_tracking_detect_exports_and_recenters_on_source_change(self):
-        from feature_detection import analyze_frame
+        from source.feature_detection import analyze_frame
         captures = []
         def factory(index):
             cap = FakeCapture(index, opened=index == 0)
@@ -644,7 +435,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual([ring.slider.get() for ring in app.ring_controls], [*radii[:2], radii[2] + 1])
         self.assertEqual((app.crosshair_x, app.crosshair_y, app.zoom_factor), (40, 50, 1.0))
 
-        with patch("astro_collimator.messagebox.showinfo") as show_help:
+        with patch("source.app.messagebox.showinfo") as show_help:
             app.show_guide_help()
         self.assertIn("Newtonian", show_help.call_args.args[0])
         self.assertIn("starting circles are presets", show_help.call_args.args[1])
@@ -748,10 +539,10 @@ class GuiTests(unittest.TestCase):
         def delayed(frame, shape, **kwargs):
             entered.set()
             release.wait(2)
-            from feature_detection import analyze_frame
+            from source.feature_detection import analyze_frame
             return analyze_frame(optical_fixture())
 
-        with patch("collimation_review.analyze_frame", side_effect=delayed):
+        with patch("source.collimation_review.analyze_frame", side_effect=delayed):
             app.start_detection()
             self.assertTrue(entered.wait(1))
             app.resume_live()
@@ -821,7 +612,7 @@ class GuiTests(unittest.TestCase):
         app = self.make_app(lambda index: FakeCapture(index, opened=index == 0))
         self.wait_until(lambda: app.last_frame is not None)
         raw = app.last_frame.copy()
-        with patch("collimation_review.analyze_frame", side_effect=ValueError("Invalid image fixture")):
+        with patch("source.collimation_review.analyze_frame", side_effect=ValueError("Invalid image fixture")):
             app.start_detection()
             self.wait_until(lambda: "Analysis failed" in app.review_status.get())
         self.assertTrue(app.view_frozen)
@@ -1285,7 +1076,7 @@ class GuiTests(unittest.TestCase):
         self.assertTrue(app.manual_references["Secondary edge"].clipped)
         app.set_review_radius(120)
         self.assertFalse(app.manual_references["Secondary edge"].clipped)
-        from edge_tracking import merge_tracking
+        from source.edge_tracking import merge_tracking
         fresh = replace(before, candidates=tuple(edge for edge in before.candidates if edge.id != secondary.id),
                         observations=tuple(edge for edge in before.observations if edge.id != secondary.id),
                         suggested={role: value for role, value in before.suggested.items() if role != "Secondary edge"})
@@ -1301,7 +1092,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(str(app.shrink_button.cget("state")), "disabled")
 
     def test_role_controls_match_circle_colors_and_keep_compact_layout(self):
-        from feature_detection import FEATURE_NAMES, FEATURE_COLORS
+        from source.feature_detection import FEATURE_NAMES, FEATURE_COLORS
         app = self.make_app(lambda index: FakeCapture(index, opened=False))
         self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
         app.last_frame = optical_fixture()
@@ -1507,7 +1298,7 @@ class GuiTests(unittest.TestCase):
         np.testing.assert_array_equal(app.last_frame, restored)
 
     def test_tracking_has_one_worker_and_discards_inflight_result_during_pick(self):
-        from feature_detection import analyze_frame as real_analysis
+        from source.feature_detection import analyze_frame as real_analysis
         app = self.make_app(lambda index: FakeCapture(index, opened=index == 0), live_tracking=True)
         self.wait_until(lambda: app.last_frame is not None)
         app.last_frame = optical_fixture()
@@ -1530,7 +1321,7 @@ class GuiTests(unittest.TestCase):
             with lock:
                 active[0] -= 1
             return result
-        with patch("collimation_review.analyze_frame", side_effect=delayed):
+        with patch("source.collimation_review.analyze_frame", side_effect=delayed):
             app.track_live.set(True)
             app.tracking_changed()
             self.wait_until(entered.is_set)

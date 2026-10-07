@@ -5,12 +5,11 @@ coverage as before**. Test count is not the acceptance criterion. Preserve the
 historical files as the coverage reference; do not execute their unit classes.
 No commits or runtime network access.
 
-Run `C:\Python313\python.exe -B run_integration_tests.py`. This explicitly selects
+Run `C:\Python313\python.exe -B scripts/test_integration.py`. This explicitly selects
 43 existing app workflows and the new `WorkflowTests` scenarios. It excludes
 `WorkerTests`, `FrameTests`, `OptionsTests`, `RangeTests`, `NativeQueryTests`,
 `DetectionTests`, `LocalImageTests`, `SharedCircleGuideTests`, `AlignmentTests`
-and `TrackingTests`. Importing reusable image/capture fixtures does not execute
-their tests. Do not use broad test discovery.
+and `TrackingTests`. Image/capture fixtures live in tests/fixtures and contain no test classes. Do not use broad test discovery.
 
 New workflows use actual Tk, image import, the production analysis worker,
 detection/tracking/guidance, rendering, setup persistence and raw PNG/JSON export.
@@ -74,3 +73,29 @@ rerun (29.282 s). No historical unit class ran. The larger-render averaging chec
 initially observed two recent samples, not three; its revised 900x700 test window
 exercises three samples within the unchanged 120 ms bound. See CONTINUATION.md
 for the run history. This evidence does not close the equivalence gaps above.
+
+## Distribution refactor — 2026-10-07
+
+The runner is now scripts/test_integration.py. All 51 active scenarios are in
+tests/integration (43 GuiTests plus 8 WorkflowTests); the 80 historical component
+cases are preserved in tests/legacy. Reusable fixtures are in tests/fixtures.
+No assertion was removed for the layout change. Local photos are in TestImages;
+the old lox references above describe the earlier baseline. All 51 relocated
+integration scenarios passed in one run (156.586 s). Historical migration gaps
+remain; reorganizing files does not certify equivalent component coverage.
+
+Additional release integration checks passed through start.py, the frozen Windows
+executable and the extracted ZIP with Python absent from the child PATH. These
+checks use the actual app for startup, persistence, Unicode image import,
+recognition, guidance, Tk rendering and paired PNG/JSON export. They substitute
+only unavailable camera hardware and do not write personal settings.
+
+Image relocation follow-up (2026-10-07): native fixtures now live in tests/images.
+All active/historical image references use TEST_IMAGES from tests/fixtures/images.py.
+The native-photo application integration workflow passed all 14 images (9.414 s).
+No assertions changed and no historical unit tests were executed.
+
+Package naming follow-up (2026-10-07): astro_collimator was renamed to source.
+Imports/mock targets and build metadata were adapted without changing assertions.
+All 51 integration scenarios passed (160.750 s); the 80 legacy references remain.
+Source and existing portable-release smoke workflows passed. No unit tests ran.

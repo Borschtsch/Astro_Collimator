@@ -1,6 +1,80 @@
-# Continuation checkpoint — updated 2026-10-06
+# Continuation checkpoint — updated 2026-10-07
 
-## Current: fast tracking, steady-frame averaging, decorated maximized startup
+## Current package name: source — 2026-10-07
+
+User requested source as the application package name. The folder is renamed;
+start.py imports source.launcher. All active/historical test imports and mock
+targets, build-script imports, setuptools package discovery/version metadata,
+AGENTS.md and current architecture/layout documentation now use source.
+Relative application imports and source-root settings behavior are unchanged.
+Astro Collimator remains the product/distribution name.
+
+Validation: all 51 existing integration scenarios passed (160.750 s). Source
+startup from another working directory passed the real application smoke workflow.
+The existing self-contained portable release also passed; its files were left
+unchanged and future builds use the renamed source package. All 80 historical
+component cases remain; no unit tests were run. No commits or Git operations.
+Earlier package names and paths below describe historical checkpoints only.
+
+
+## Latest maintenance: test images relocated — 2026-10-07
+
+User moved the native image fixtures into tests/images. TEST_IMAGES in
+tests/fixtures/images.py now resolves that folder independently of cwd. Both
+active integration and historical image checks use the shared constant; no
+image assertions changed. Development layout documentation is updated.
+Validation: the targeted native-photo application integration workflow passed
+(1 scenario covering all 14 photos, 9.414 s). No unit tests or Git operations.
+Application and portable release are unchanged; test images remain excluded.
+
+
+## Current: shareable source layout and verified portable Windows release — 2026-10-07
+
+User requested a clean source layout, one start.py entry point, a concise
+astronomy-focused README, separate user documentation and simple distribution.
+Plan recorded in DISTRIBUTION_PLAN.md before moving files.
+
+- Only start.py remains as a root Python file. Application code is packaged in
+  astro_collimator/ with relative imports; app.py contains the original app shell.
+  Source and frozen launch share launcher.py. Version metadata is 0.1.0.
+- Existing root options.json remains in place. Source settings resolve beside
+  start.py; frozen settings resolve beside AstroCollimator.exe. Neither depends
+  on cwd or PyInstaller's internal data directory. Release checks use temporary
+  settings and do not change personal options.
+- Active scenarios moved to tests/integration, fixtures to tests/fixtures and all
+  80 historical component cases to tests/legacy. No test assertion was removed.
+  Fixture paths use the user's TestImages folder. Explicit runner is now
+  scripts/test_integration.py; no legacy/unit classes are selected or executed.
+- README introduces Newtonian collimation assistance for astrophotographers and
+  links GETTING_STARTED.md, USER_GUIDE.md and DEVELOPMENT.md. Controls and optical
+  interpretation are in the user guide; technical history stays in developer docs.
+- scripts/build_windows.py builds a versioned windowed x64 portable application
+  and ZIP, includes user docs/build versions/dependency notices, excludes personal
+  options/tests/photos and refuses to overwrite an existing release folder.
+  Requirements pin validated runtime/build versions. Build uses an isolated venv,
+  leaving shared Python unchanged. No runtime network dependency was introduced.
+- Validation: all 51 relocated integration scenarios passed in one run (156.586 s).
+  Source startup from another working directory, actual frozen app and relocated
+  extracted ZIP passed production workflows: decorated maximized Tk, options,
+  Unicode PNG import, role detection, guidance and exact paired export. The ZIP
+  check removed Python-related search paths and used spaces/Unicode in its path.
+- Artifact: dist/AstroCollimator-0.1.0-windows-x64.zip (74,479,300 bytes).
+  See DISTRIBUTION_VALIDATION.json for checksum, build versions and actual results.
+  Nothing was published/uploaded, and no commits/Git operations were performed.
+
+Deployment smoke support is hidden from normal CLI help: start.py --smoke-test
+--report <file>. It substitutes only absent hardware and uses real app components.
+It is a release integration workflow, not a unit test. Camera/telescope hardware
+validation and the historical coverage-equivalence gaps remain outstanding.
+
+Next: use the supplied portable ZIP for Windows distribution; review real camera
+behavior on a second computer before announcing hardware compatibility. Close
+existing integration-equivalence gaps and calibrate optical advice as separately
+recorded. Earlier flat-module entry/test commands below are historical only.
+
+## Previous checkpoint: live tracking and validation policy
+
+## Fast tracking, steady-frame averaging, decorated maximized startup
 
 User confirmed both changes: improve live detection with fast rim tracking and
 short averaging while steady, and restore the missing title bar. Also recorded

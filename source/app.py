@@ -7,9 +7,9 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
 from PIL import Image, ImageTk
-from camera_properties import PropertyInfo, query_camera_properties
-from collimation_review import ReviewTools
-from feature_detection import DisplayTransform, draw_detection
+from .camera_properties import PropertyInfo, query_camera_properties
+from .collimation_review import ReviewTools
+from .feature_detection import DisplayTransform, draw_detection
 
 
 def open_camera(index):
@@ -970,9 +970,3 @@ class WebcamApp(ReviewTools):
         self.worker.stop_event.set()
         self.root.destroy()
 
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = WebcamApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_closing)
-    root.mainloop()

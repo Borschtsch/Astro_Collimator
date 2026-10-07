@@ -3,7 +3,7 @@
 from dataclasses import asdict, dataclass
 import math
 
-from feature_detection import FEATURE_NAMES, SOFT_EDGE_WIDTH, required_features
+from .feature_detection import FEATURE_NAMES, SOFT_EDGE_WIDTH, required_features
 
 
 @dataclass(frozen=True)

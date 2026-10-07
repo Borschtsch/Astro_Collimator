@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import json
 import math
 import os
+import sys
 from pathlib import Path
 import tempfile
 
@@ -65,9 +66,15 @@ class TelescopeProfile:
         return cls(**{key: value for key, value in data.items() if key in fields}).validate()
 
 
+def default_options_path():
+    """Keep user settings beside the portable app or source launcher, never in a bundle."""
+    directory = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent
+    return directory / "options.json"
+
+
 class OptionsStore:
     def __init__(self, path=None):
-        self.path = Path(path) if path is not None else Path(__file__).with_name("options.json")
+        self.path = Path(path) if path is not None else default_options_path()
 
     def load(self):
         if not self.path.exists():

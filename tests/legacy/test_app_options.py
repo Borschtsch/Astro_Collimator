@@ -4,12 +4,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from app_options import OptionsStore, TelescopeProfile
+from source.app_options import OptionsStore, TelescopeProfile
 
 
 class OptionsTests(unittest.TestCase):
     def test_absent_primary_mark_is_saved_and_legacy_unknown_is_optional(self):
-        from feature_detection import required_features
+        from source.feature_detection import required_features
         profile = TelescopeProfile(center_mark_shape="None")
         self.store.save(profile)
         self.assertEqual(self.store.load(), profile)
@@ -57,7 +57,7 @@ class OptionsTests(unittest.TestCase):
     def test_failed_atomic_replace_keeps_original_and_cleans_temporary_file(self):
         original = TelescopeProfile(name="Original")
         self.store.save(original)
-        with patch("app_options.os.replace", side_effect=PermissionError("Locked file")):
+        with patch("source.app_options.os.replace", side_effect=PermissionError("Locked file")):
             with self.assertRaises(PermissionError):
                 self.store.save(TelescopeProfile(name="New"))
         self.assertEqual(self.store.load(), original)

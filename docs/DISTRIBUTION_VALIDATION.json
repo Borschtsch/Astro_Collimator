@@ -1,0 +1,91 @@
+{
+  "date": "2026-10-07",
+  "integration": {
+    "command": "C:\\Python313\\python.exe -B scripts/test_integration.py",
+    "scenarios": 51,
+    "passed": 51,
+    "elapsed_seconds": 156.586,
+    "historical_cases_preserved": 80,
+    "historical_coverage_equivalence": "migration remains incomplete"
+  },
+  "source": {
+    "version": "0.1.0",
+    "status": "passed",
+    "settings_path": "C:\\Astro\\Astro_Collimator-main\\options.json",
+    "checks": [
+      "decorated maximized startup",
+      "Tk rendering",
+      "setup persistence",
+      "Unicode image import",
+      "optical role detection",
+      "alignment guidance",
+      "matched raw PNG and JSON export"
+    ],
+    "roles": [
+      "Primary reflection",
+      "Focuser edge",
+      "Secondary edge",
+      "Camera pupil"
+    ]
+  },
+  "portable": {
+    "version": "0.1.0",
+    "status": "passed",
+    "settings_path": "C:\\Astro\\Astro_Collimator-main\\dist\\AstroCollimator\\options.json",
+    "checks": [
+      "decorated maximized startup",
+      "Tk rendering",
+      "setup persistence",
+      "Unicode image import",
+      "optical role detection",
+      "alignment guidance",
+      "matched raw PNG and JSON export"
+    ],
+    "roles": [
+      "Primary reflection",
+      "Focuser edge",
+      "Secondary edge",
+      "Camera pupil"
+    ]
+  },
+  "extracted_archive": {
+    "version": "0.1.0",
+    "status": "passed",
+    "settings_path": "C:\\Astro\\Astro_Collimator-main\\build\\Release check é cty3482s\\AstroCollimator\\options.json",
+    "checks": [
+      "decorated maximized startup",
+      "Tk rendering",
+      "setup persistence",
+      "Unicode image import",
+      "optical role detection",
+      "alignment guidance",
+      "matched raw PNG and JSON export"
+    ],
+    "roles": [
+      "Primary reflection",
+      "Focuser edge",
+      "Secondary edge",
+      "Camera pupil"
+    ]
+  },
+  "artifact": {
+    "path": "dist\\AstroCollimator-0.1.0-windows-x64.zip",
+    "bytes": 74479300,
+    "sha256": "c1607358dfc53cadb5f2d1d5090292055aa469e004f55803e15e292f673fe53b"
+  },
+  "build": {
+    "app_version": "0.1.0",
+    "python": "3.13.6",
+    "platform": "win32",
+    "dependencies": {
+      "pyinstaller": "6.22.3",
+      "opencv-python": "5.0.0.93",
+      "Pillow": "12.3.0",
+      "numpy": "2.3.2"
+    }
+  },
+  "limits": [
+    "No physical telescope/camera validation performed for this packaging change.",
+    "No release was published or uploaded."
+  ]
+}
