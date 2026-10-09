@@ -912,8 +912,9 @@ def draw_detection(frame_rgb, result, selections, confirmed, transform, show_can
         cv2.putText(frame_rgb, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     if result.guide_center is not None and centers:
         centers = [(centers[0][0], (255, 255, 255))]
+    center_thickness = 2 if result.guide_center is not None else 1
     for center, color in centers:
-        cv2.drawMarker(frame_rgb, center, (0, 0, 0), cv2.MARKER_CROSS, 11, 2)
+        cv2.drawMarker(frame_rgb, center, (0, 0, 0), cv2.MARKER_CROSS, 11, center_thickness + 1)
     for center, color in centers:
-        cv2.drawMarker(frame_rgb, center, color, cv2.MARKER_CROSS, 11, 1)
+        cv2.drawMarker(frame_rgb, center, color, cv2.MARKER_CROSS, 11, center_thickness)
         cv2.circle(frame_rgb, center, 1, color, -1)

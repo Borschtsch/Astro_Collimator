@@ -18,6 +18,9 @@ guidance is approximate.
 
 ## Detect and adjust
 
+At startup, the image shows only the FOV crosshair. Guide circles appear after
+detection or when you select **Manual guides**.
+
 Select **Detect edges / restart tracking**. Recognized references appear
 immediately, without a confirmation step.
 
@@ -42,8 +45,27 @@ Follow the next-action instruction and make one small adjustment at a time.
 With a live camera, **Track live edges** redraws measured references as the view
 changes. A manually added reference stays in place until a suitable detected
 edge can replace it. Disabling tracking keeps the camera stream running and
-holds the last measured circles. **Detect** starts a fresh detection and clears
-manual overrides.
+holds the last measured circles. **Detect** starts a fresh detection. Configured
+manual guide sizes remain available for edges the detector cannot find.
+
+## Manual guides
+
+Use **Manual guides** for a quick visual comparison when an edge is missing.
+Detected circles keep their measured sizes. Missing guides start around those
+references: orange focuser outside cyan secondary, with green primary reflection
+inside. If only the secondary is detected, it anchors both starter sizes. With no
+detection, the tab provides three nested presets.
+
+Resize a guide with its slider, **− / +**, or scrolling over its control. Detected
+circles can be resized here too. Drag a rim to move the shared center. A resized
+missing guide keeps its size when you switch tabs, zoom or restart detection.
+Entering Manual guides reveals all three circles. They remain visible when you
+return to Detect & review, alongside any recognized edges. Before you use Manual
+guides, automatic detection shows only recognized references. Opening a new image
+or switching the camera resets the guide setup for that source.
+
+Missing presets are visual estimates and do not count as measured edges for
+alignment advice. To include a missing reference in tracking and analysis, use **Pick edge** in Detect & review.
 
 ## Inspect the image
 
@@ -60,7 +82,7 @@ measured outlines beneath them.
 | Enter an exact radius | Type **Radius (px)**, then press **Enter** |
 | Cancel radius entry | **Escape** while editing |
 | Zoom | Mouse wheel |
-| Pan | Left-drag empty space, or middle-drag |
+| Pan | Zoom in, then left-drag empty space or the black image margin; middle-drag also works |
 | Blink between image and overlays | Hold the right button; release to restore |
 | Reset zoom and pan | **Reset view** or **Ctrl+0** |
 | Show or hide overlays | **Show overlays** |

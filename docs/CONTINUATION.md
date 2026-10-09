@@ -1,4 +1,64 @@
-# Continuation checkpoint — updated 2026-10-07
+# Continuation checkpoint — updated 2026-10-09
+
+## Direct Python startup correction — 2026-10-07
+
+User clarified that Explorer already invokes the associated Python interpreter;
+no CMD file or alternate interpreter is wanted. Remove start.cmd and automatic
+venv/pythonw switching. Keep the existing start.py entry (the latest message says
+setup.py; clarification is pending because that file does not exist here).
+Retain visible startup errors/logging and validate direct source startup via the
+existing association without windowed flags. Earlier bootstrap/venv selection
+notes below describe the rejected approach, not current behavior. No commits.
+
+## Source double-click startup plan — 2026-10-07
+
+Make start.py a source bootstrap: prefer a configured local .venv, use pythonw on
+Windows for GUI launches, preserve CLI arguments and the shared frozen launcher,
+and show startup failures with a log instead of an invisible exit. Add start.cmd
+as an association-independent Windows entry that still calls start.py. Do not
+modify system file associations or install dependencies at runtime. Validate real
+source launches, virtual-environment selection and Explorer file association via
+complete app smoke workflows. No unit tests or Git operations.
+
+## Windows and Linux support — 2026-10-07
+
+Implemented native Linux portability in the existing source package, keeping
+start.py and offline runtime. Plan/handoff: PLATFORM_SUPPORT.md. Tk window-state
+helpers use X11 -zoomed instead of unsupported wm state zoomed; wheel helpers
+support MouseWheel and Button-4/5 everywhere. Fullscreen restoration preserves
+normal/maximized state. Windows native DirectShow behavior remains.
+
+Linux cameras use explicit /dev/videoN + CAP_V4L2 with raw property units, enumerate
+non-contiguous/high video indices, and query ranges via the read-only V4L2 ioctl
+interface. Inactive/locked/unsupported controls are disabled; failures stay unknown
+with numeric fallback. Automatic modes are never changed by range querying.
+
+scripts/build_portable.py shares assembly, source/frozen/archive workflow checks
+and documentation/license copying. Windows and Linux wrappers enforce native OS;
+ZIP for Windows, tar.gz for Linux preserving symlinks and permissions. Build outputs
+use separate platform/architecture folders and refuse existing application folders.
+The old flat Windows portable folder and ZIP are unchanged.
+
+Validation: 54 integration scenarios passed on Windows (163.735 s); additional
+maximized fullscreen restoration assertions passed in a targeted UI rerun (0.909 s).
+Three new complete UI/camera/export workflows exercise Linux wheel input, native
+range parsing/device scan/control/switch and query permission failure. Only the
+physical capture/device/OS ioctl boundary is substituted. Historical tests and
+previous assertions are retained; historical coverage-equivalence gaps remain.
+No unit tests or Git operations. UTF-8 BOM state and line endings preserved.
+
+The rebuilt Windows release passed source, executable and extracted/relocated ZIP
+checks. Archive: dist/windows-x64/AstroCollimator-0.1.0-windows-x64.zip.
+Machine-readable evidence: docs/PLATFORM_VALIDATION.json.
+
+Next: obtain SSH to the user's actual Linux VM with a logged-in graphical desktop
+(no WSL). Install the documented Linux dependencies in a native venv; use the same
+user's actual DISPLAY/XAUTHORITY. Run scripts/validate_linux.py, then --build after
+installing requirements-build.txt/binutils. Reports under build/linux-validation.
+Native Linux desktop behavior, real V4L2 drivers and frozen/relocated Linux releases
+are NOT validated yet. Pass a USB camera through to the guest for the separate
+real-camera checklist. Linux baseline/architecture support must be determined by
+native results; x64 checks do not certify arm64 or every distro.
 
 ## Current package name: source — 2026-10-07
 
@@ -733,3 +793,331 @@ inverse photograph solver. Some dimensions are estimated and primary imaging
 is approximate. Some geometry reads a DOM option directly and needs separation.
 Its screw controls encode displacement rather than calibrated actual turns.
 No toolbox code was copied into this slice.
+
+Source double-click implementation completed: start.py delegates to
+source/bootstrap.py, selecting .venv when present and pythonw for Windows GUI
+startup. start.cmd calls the same entry without depending on .py associations.
+CLI arguments, version reporting and frozen startup remain functional. Startup
+failures log a traceback and Windows GUI failures show a message. No registry
+association changes, dependency downloads/installations or Git operations.
+
+Validation: all 57 integration scenarios passed (178.231 s). Three new real-launch
+workflows use isolated Unicode/spaced source copies and offline-created venvs;
+the fixture exposes the test runner's installed packages through a .pth file,
+so it also supports a Linux runner whose dependencies live only in a venv.
+The Windows Explorer scenario explicitly skips on Linux. No unit classes ran,
+previous assertions remain and historical coverage gaps are still documented.
+
+A fresh build under dist/startup-validation passed source, frozen and relocated
+archive smoke checks. Existing release folders were preserved. Evidence is in
+docs/STARTUP_VALIDATION.json; the rebuilt archive is
+ dist/startup-validation/AstroCollimator-0.1.0-windows-x64.zip.
+Normal GUI startup uses the same windowed bootstrap branch exercised by the
+hidden --windowed --smoke-test workflow. Documentation now explains double-click
+startup and the start.cmd fallback. Native Linux validation remains pending VM.
+
+Direct startup correction completed: start.cmd removed; source/bootstrap.py no
+longer selects .venv, pythonw or a child process. It calls the shared launcher in
+the interpreter invoked by the caller/Explorer and retains readable errors/logs.
+The three launcher integration scenarios were updated to this explicit user
+preference and passed (3.300 s). The Explorer case deliberately includes an empty
+local .venv and proves it is ignored while the associated Python completes real
+Tk/setup/detection/export. Explicit venv invocation and missing-dependency
+failures remain covered. No production Tk/application functions are mocked.
+
+The actual reported normal-start failure is not reproduced here. The user's
+observed behavior/error and whether setup.py means the existing start.py are
+pending clarification. Do not claim that an unidentified root cause was fixed.
+Earlier startup package/test evidence remains historical; no release was rebuilt
+for this direct-interpreter correction. No commits or association changes.
+
+## Central guide crosshair visibility — 2026-10-07
+
+Plan: draw the FOV crosshair before optical guides so the central marker stays
+above it. Increase the shared-center white marker from 1 to 2 pixels, with a
+matching black outline. Preserve independent candidate markers, FOV controls,
+blink behavior and raw exports. Verify overlap through actual Tk rendering in
+an integration scenario; no unit tests or commits.
+
+Completed: the independent FOV crosshair is rendered first, then optical guides
+and the central marker. The shared-center marker now uses a 2-pixel white stroke
+and 3-pixel black outline; independent candidate markers retain their previous
+width. Five targeted application integration scenarios passed (9.850 s): central
+overlap/thickness, FOV visibility, FOV dragging, hold-right blink and raw export.
+The overlap check inspects actual Tk-rendered pixels and waits for the FOV redraw.
+No prior assertions were removed. No unit tests or commits; no release rebuild
+was needed for this display-only change. Linux native validation remains pending.
+
+## Explorer console visibility and interpreter errors — 2026-10-07
+
+Plan: hide only a dedicated Windows launch console (the application and optional
+Python file launcher), preserving consoles shared with a terminal. Keep the same
+associated Python process, with no CMD file or interpreter restart. Include the
+full interpreter location/version in startup logs and the location in error
+messages. Validate through the real Explorer association and startup/error app
+workflows; no unit tests or commits.
+
+Completed: Windows source GUI startup hides only the dedicated console before
+loading GUI dependencies, using native console process ownership and SW_HIDE.
+A shared terminal is preserved; no interpreter switch, process restart, CMD file
+or association change was introduced. Startup messages identify the interpreter;
+UTF-8 error logs include its full location, Python version and traceback. Smoke
+reports retain their existing interpreter field and now record native console
+visibility on Windows.
+
+Validation: four targeted actual source/Explorer/shared-console/dependency-failure
+workflows passed (5.030 s). The prescribed command
+`C:\Python313\python.exe -B scripts/test_integration.py` then passed all
+59 integration scenarios in 176.255 s. This includes the thicker central
+crosshair change. No historical assertions were removed or unit tests run.
+The Unicode-path failure scenario explicitly requests UTF-8 terminal output;
+production file logs are always UTF-8. Evidence: DIRECT_STARTUP_VALIDATION.json.
+
+Limitations: Windows may allocate/show a console briefly before Python executes.
+Windows Terminal pseudoconsole window hiding remains unvalidated and is not
+claimed. Native Linux desktop/camera/release validation and the historical
+coverage-equivalence gaps remain pending. Existing packaged releases were not
+rebuilt for these source-launch changes. No commits or other Git operations.
+
+## Opened-image mouse navigation — 2026-10-08
+
+Plan: reproduce opened-image wheel/left-drag events through actual Tk widgets,
+restore panning from the black image margin, preserve optical/FOV drag targets,
+Control-wheel radius edits, reset and raw geometry. Tk 9.0.4 on Windows reports
+symbolic Button-4/5 events as button numbers 8/9, which the current wheel helper
+ignores; normalize these only on Windows/Aqua Tk 9. Ordinary MouseWheel zoom and
+inside-image drag passed the focused reproduction, so this does not yet establish
+the exact cause of the user's reported wheel failure. Ask for launch/event details
+while checking a real file-open workflow. No Git operations or unit tests.
+
+Validation environment changed: C:\Python313\python.exe is no longer present.
+The project .venv now uses Python 3.14.8/Tk 9.0.4. Tk initialization initially fails
+because Tcl's installed libraries are ZIPs and this test process cannot locate
+init.tcl. For validation only, extract those existing local libraries under
+build/gui-validation/tcl and pass TCL_LIBRARY/TK_LIBRARY to child processes.
+Do not alter the user's interpreter installation or app environment selection.
+
+Completed: begin_pan now accepts the entire image widget, including letterbox
+margins; circle/FOV hit testing remains bounded to visible image geometry. Pan
+remains limited to the source crop, so zoom in first when the whole image fits.
+wheel_direction normalizes Tk 9 Windows/Aqua symbolic Button-4/5 numbers 8/9;
+X11 physical buttons 8/9 are not treated as vertical wheel input. Normal wheel
+zoom, Control-wheel circle sizing and reset behavior remain intact.
+
+The new file-open integration scenario opens/detects/exports an actual image,
+zooms only through widget events, drags from the black margin, verifies crop
+movement with unchanged detection/raw pixels, and resets through the button.
+Five focused navigation/editing workflows passed in 10.642 s.
+
+Prescribed validation: .venv/Scripts/python.exe -B scripts/test_integration.py,
+with the local extracted Tcl/Tk library environment described above. Of 60
+integration scenarios, 59 passed (177.263 s); the Explorer association case
+failed at os.startfile with PermissionError [WinError 5] Access is denied for
+its temporary source copy, before application startup. No app assertion in
+that workflow ran, and it was not skipped or weakened. All navigation, camera,
+tracking, detection, rendering, persistence/export and other source-launch cases
+passed. Log: build/gui-validation/navigation-integration.log. Native Explorer
+association validation therefore remains a current environment gap; the earlier
+2026-10-07 passing result applies only to that earlier environment. This was an
+OS launch denial, not an automatic approval-review rejection.
+
+The precise user-reported wheel failure remains unconfirmed: ordinary MouseWheel
+and in-image panning already passed the initial reproduction, whereas margin
+panning and Tk 9 symbolic wheel inputs were reproducibly broken and corrected.
+User confirmed an opened image but did not specify source versus packaged launch.
+Existing portable binaries were not rebuilt. Restart the updated source app to
+use these changes. No unit tests, assertion removals, commits or Git operations.
+Historical coverage-equivalence gaps and native Linux VM checks remain pending.
+
+## High-resolution wheel zoom — 2026-10-08
+
+Plan: handle TouchpadScroll in the shared wheel binder when Tk exposes
+::tk::PreciseScrollDeltas. Decode the vertical signed delta instead of treating
+the packed X/Y value as a simple direction. Keep ordinary MouseWheel/X11 wheel
+paths, Control-wheel circle editing and camera controls. Zoom proportionally
+for fine Windows deltas so a 30-unit packet is a quarter of a 120-unit wheel step.
+Verify native WM_MOUSEWHEEL delivery to an actual visible production window,
+including sidebar focus, both signs and unchanged raw/guide geometry; no unit
+checks, Git operations or runtime network dependency.
+
+Reproduced before edits: Python 3.14.8/Tk 9.0.4 turns a native Windows wheel packet
+with delta 30 into TouchpadScroll delivered to the video label. Zoom remains 1.0
+regardless of whether focus is on the label, camera entry or root. The app only
+binds MouseWheel/Button-4/5. Earlier generated MouseWheel checks missed this path.
+Reference: https://core.tcl-lang.org/tips/doc/main/tip/684.md and
+https://core.tcl-lang.org/tk/tktview/7a17cfd1b55980aa2bfbaf521600d95b12551432.
+
+Completed: bind_wheel conditionally registers TouchpadScroll using Tk's available
+PreciseScrollDeltas decoder. It forwards the signed vertical component and keeps
+horizontal-only movement from changing zoom or controls. Windows precise zoom
+uses delta / 120 for immediate fine increments; ordinary mouse wheels retain
+0.1 steps. Circle Control-scroll and other controls reuse the normalized events.
+
+Evidence: before the patch an actual native 30-unit Windows packet reached the
+image as TouchpadScroll without changing zoom. After the patch the same packet
+changes zoom by 0.025 with image, camera-entry or root focus. The committed-to-file
+integration workflow checks both signs at 30/120, actual rendered crop changes,
+sidebar focus, horizontal rejection and preserved raw/optical geometry. A second
+actual app workflow checks packed axes, Control-scroll sizing and raw export.
+These are integration scenarios, not component/unit tests; Windows routing APIs
+and Tk event conversion are not mocked. They explicitly skip on runtimes without
+precise scroll support, and the native Windows workflow skips on Linux.
+
+Validation: four focused workflows passed (8.799 s). The prescribed full runner
+(.venv/Scripts/python.exe -B scripts/test_integration.py with the existing
+validation-only Tcl/Tk environment) ran 62 scenarios in 184.673 s: 61 passed,
+one Explorer startup scenario failed at os.startfile with the same Windows
+PermissionError [WinError 5] before app execution. No skipped cases in this run;
+all native-wheel, image, camera and other app assertions passed. Full log:
+build/gui-validation/precise-wheel-integration.log. No assertion was removed or
+weakened. No Git operations, unit tests or interpreter-install changes.
+
+The previous fix missed the separate high-resolution event type; this patch
+addresses a reproduced native input failure. User confirmed start.py with no wheel response, so the updated source entry is
+the relevant launch path. Changes require restarting the app; existing portable
+binaries were not rebuilt. Native Linux GUI/hardware validation and
+historical coverage-equivalence gaps remain pending.
+
+## Touchpad field diagnosis — 2026-10-08
+
+User reports only circles change without physically holding Ctrl. More precisely,
+horizontal two-finger scrolling changes circles; vertical two-finger scrolling
+does nothing. Physical mouse is untested. This conflicts with the tested source
+handler (vertical precise input zooms, horizontal input does not). Do not declare
+another fix without the actual received event data.
+
+Plan: temporarily enable bounded local input diagnostics for normal source GUI
+startup. Record interpreter/source/Tk identities, received event type/axes/state,
+widget and callback, and zoom/circle geometry before/after. Debounce local writes
+and keep at most 40 events; capture no images and transmit nothing. Test via real
+file-open/production widget/render/export workflows. User must restart this exact
+start.py and scroll both directions so the actual session can be diagnosed.
+Native Computer Use inspection was attempted with the bundled skill/API, but its
+local native pipe is unavailable (os error 2). No alternate desktop automation.
+Remove temporary default tracing after resolving the field failure; preserve
+explicit opt-in diagnostics if helpful. No Git operations or unit tests.
+
+Field evidence obtained from the user's restarted app: actual interpreter is
+Python314/python.exe, Python 3.14.8/Tk 9.0.4, loading this workspace's source.
+TouchpadScroll reaches the video Label's WebcamApp.zoom_with_scroll callback with
+state 0 (no Ctrl). Vertical deltas change zoom/crop; horizontal-only deltas leave
+zoom unchanged. Captured raw optical radii remain identical before/after each
+event. A subsequent 40-event snapshot records 30 zoom changes from approximately
+223% to 100% and zero measured-radius changes. Summary:
+build/gui-validation/touchpad-session-validation.json.
+
+User explicitly confirmed after restarting this exact start.py: "Yes, it works
+now". The high-resolution event support is active in the restarted source app;
+no additional axis remapping or circle behavior change was needed. Removed the
+temporary automatic source-startup trace. The shared binder retains optional
+ASTRO_COLLIMATOR_INPUT_LOG diagnostics, disabled by default, bounded to 40 local
+events with 100 ms write debounce. The currently running diagnostic session may
+continue tracing until its next restart because its environment was already set.
+
+A new actual file-open/render/export workflow proves that the source image itself
+enlarges (distinct colored pixel area grows approximately 4x at 2x zoom), not just
+overlays. Raw pixels and detected radii remain unchanged; opt-in log fields and
+input callback are checked. It and two existing precise/ordinary navigation
+workflows passed (3 checks, 5.510 s). Full prescribed runner result follows below.
+No unit tests, Git operations or historical assertion removals.
+
+Prescribed full integration validation completed: 63 scenarios in 187.730 s,
+62 passed and the same Explorer temporary-source launch failed with WinError 5
+before app startup. No skips, unit tests or broad discovery. All rendering,
+precise-input, camera, tracking and other app checks passed. Evidence:
+build/gui-validation/touchpad-field-integration.log. The trace's first retained
+sample includes an ignored horizontal event [-3,0], positive vertical [0,4]
+changing zoom 1.775 -> 1.7783, and negative vertical [0,-156] changing zoom
+1.7825 -> 1.6525, all with Ctrl state 0 and unchanged measured radii. The actual
+user confirmation closes this touchpad field issue. Earlier Explorer permission,
+historical coverage-equivalence and native Linux validation gaps remain explicit.
+
+## Startup overlays and manual references — plan, 2026-10-09
+
+Show only the enabled FOV crosshair before detection in Detect & review. Display
+manual starter guides only on the Manual guides tab. Reuse detected references
+there without duplicate rings; estimate missing radii in Focuser > Secondary >
+Primary order from the nearest detected references. Keep user-sized missing
+guides through navigation, but clear estimates on a new image or detection run.
+Keep estimates separate from measurements and alignment advice. Connect manual
+controls to detected circles as well. Give tabs bold labels, spacing and distinct
+selected colors without changing the global widget theme. Validate startup pixels,
+partial detections, resize/move/navigation, tab state and existing integration
+workflows. No Git operations; native Linux desktop validation remains pending.
+
+Implemented: Detect & review and Camera now hide manual starter rings. Manual
+circles are shown only on Manual guides; detected rings are reused once, with
+working sliders/visibility controls. Missing guides use preset ratios against a
+single detected radius or interpolation between two measured radii. User-sized
+missing rings survive tab switches, zoom and shared-center movement. New source
+images and Detect clear estimates/overrides. Presets remain visual helpers,
+separate from measurement exports/advice; Pick edge remains the path to adding
+measured/manual references for tracking. FOV remains enabled independently.
+
+Tabs use bold platform-default text, distinct selected colors and a portable
+clam tab element without changing the global native widget theme. The first full
+run exposed small-screen clipping from extra tab padding; reducing tab and
+review-panel padding restored all four affected layout/navigation scenarios
+(4 passed, 6.794 s). Old manual click/render assertions now explicitly select
+Manual guides before exercising presets, preserving their behavior coverage.
+New startup/partial-reference workflows cover rendered pixels, each single-ring
+anchor, editing detected circles, zoom/navigation retention and fresh detection.
+Final prescribed runner result is recorded below when complete.
+
+Revalidation exposed intermittent native Windows wheel routing failures (the
+same native workflow passed in the first full run and an isolated rerun).
+One run also showed an unintended integer rounding of a detected radius.
+Guard manual slider callbacks by the active manual tab and ignore writes equal
+to the displayed rounded radius. Hidden Tk scale updates must not turn an
+untouched fractional measurement into a manual edit. Extended the partial-guide
+integration scenario to assert this, then checked manual resizing, native wheels
+and actual source-image zoom together: 3 passed in 5.553 s. Final full run pending.
+
+Final prescribed integration validation completed: 65 scenarios in 87.898 s,
+64 passed; the sole error is the previously recorded Explorer temporary-source
+launch (WinError 5 at os.startfile, before app startup). Native Windows wheel,
+all GUI/layout, image zoom/pan, manual guides, camera/tracking and source startup
+workflows passed. No skipped assertions, unit tests or broad discovery. Evidence:
+build/gui-validation/startup-guides-final-integration.log. The intermediate native
+wheel failure remains documented above, with its isolated passing rerun in
+build/gui-validation/startup-guides-native-wheel-recheck.log.
+
+Validation used the project Python 3.14 environment and Tk 9 on Windows with the
+existing extracted Tcl/Tk validation libraries. Native Linux GUI/camera/release
+validation and previously mapped historical equivalence gaps remain unresolved.
+Restart start.py to load the changes. Portable releases were not rebuilt for
+this task. No Git operations were performed.
+
+## Manual-session persistence — plan, 2026-10-09
+
+User clarified that manual circles must survive returning to Detect & review.
+Treat entering Manual guides as enabling a manual guide session for the current
+image/camera source: reveal all three optical guide roles on entry, retain their
+sizes and center across tabs, and continue displaying missing-role manual guides
+alongside detected roles without duplicates. Auto-only startup/live workflows
+still display no presets until manual mode is used. Detect can reacquire measured
+edges, but must retain the manual fallback configuration when an edge is absent.
+A new image/camera source resets the manual session. Keep visual estimates
+separate from actual measured/manual-picked references used for analysis. Add
+integration coverage for tab persistence, hide/re-entry restoration, detection
+restart with missing roles, live master movement and fresh-source reset. No Git.
+
+Implemented manual-session persistence. Entering Manual guides enables the guide
+session and restores all three per-ring visibility flags plus Show guides. Guide
+visibility persists across tabs; automatic roles are rendered once, with missing
+manual rings still present. Detected radii can replace estimates; manually sized
+missing rings retain their values. Detect keeps the fallback setup, while loading
+another source resets it (or starts fresh presets if already on the manual tab).
+Global overlay hiding/blink and independent FOV behavior remain available.
+Retained manual overlays also remain resizable with Ctrl+wheel in review; this
+explicit user input marks the radius override while hidden slider layout writes
+remain blocked from editing measurements.
+
+Prescribed runner: 66 scenarios in 80.053 s; 65 passed, sole error is
+previously recorded Explorer launch WinError 5 before app startup. Evidence:
+build/gui-validation/manual-session-integration.log. After adding explicit
+Ctrl+wheel retention, the complete blank-detect/manual/live-loss/new-source
+workflow passed again (1 scenario, 2.888 s). All original workflow and failure
+assertions retained, with tab visibility/reset expectations updated to match the
+user clarification. No unit tests, broad discovery, Git operations or portable
+release rebuild. Native Linux desktop and historical equivalence gaps remain.

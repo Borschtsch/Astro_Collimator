@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-07",
+  "windows": {
+    "integration_scenarios": 54,
+    "integration_status": "passed",
+    "integration_seconds": 163.735,
+    "maximized_restore_extra_assertions_status": "passed",
+    "source_smoke": {
+      "version": "0.1.0",
+      "status": "passed",
+      "settings_path": "C:\\Astro\\Astro_Collimator-main\\options.json",
+      "checks": [
+        "decorated maximized startup",
+        "Tk rendering",
+        "setup persistence",
+        "Unicode image import",
+        "optical role detection",
+        "alignment guidance",
+        "matched raw PNG and JSON export"
+      ],
+      "roles": [
+        "Primary reflection",
+        "Focuser edge",
+        "Secondary edge",
+        "Camera pupil"
+      ]
+    },
+    "frozen_smoke": {
+      "version": "0.1.0",
+      "status": "passed",
+      "settings_path": "C:\\Astro\\Astro_Collimator-main\\dist\\windows-x64\\AstroCollimator\\options.json",
+      "checks": [
+        "decorated maximized startup",
+        "Tk rendering",
+        "setup persistence",
+        "Unicode image import",
+        "optical role detection",
+        "alignment guidance",
+        "matched raw PNG and JSON export"
+      ],
+      "roles": [
+        "Primary reflection",
+        "Focuser edge",
+        "Secondary edge",
+        "Camera pupil"
+      ]
+    },
+    "extracted_archive_smoke": {
+      "version": "0.1.0",
+      "status": "passed",
+      "settings_path": "C:\\Astro\\Astro_Collimator-main\\build\\windows-x64\\Release check \u00e9 up594549\\AstroCollimator\\options.json",
+      "checks": [
+        "decorated maximized startup",
+        "Tk rendering",
+        "setup persistence",
+        "Unicode image import",
+        "optical role detection",
+        "alignment guidance",
+        "matched raw PNG and JSON export"
+      ],
+      "roles": [
+        "Primary reflection",
+        "Focuser edge",
+        "Secondary edge",
+        "Camera pupil"
+      ]
+    },
+    "archive": "dist/windows-x64/AstroCollimator-0.1.0-windows-x64.zip",
+    "bytes": 74499628,
+    "sha256": "b8df3d3a934a7bdc04370f44db72d0017d2c193ab9f5f6942a67df2bf5558dc0"
+  },
+  "linux": {
+    "native_status": "pending VM SSH and desktop session",
+    "portability_workflows_on_windows": "3 passed using camera/OS hardware boundary substitutes",
+    "native_validation_command": ".venv/bin/python scripts/validate_linux.py --build",
+    "physical_camera_status": "pending USB passthrough and desktop user permissions"
+  },
+  "coverage_policy": "Integration only; historical migration gaps remain in INTEGRATION_COVERAGE.md"
+}

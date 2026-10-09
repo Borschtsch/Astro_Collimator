@@ -4,7 +4,7 @@
 
 Astro Collimator helps astrophotographers inspect and align their Newtonian
 optics using a camera view through the focuser. It brings live images, optical
-references and practical adjustment guidance into one desktop application.
+references and practical adjustment guidance into one desktop application for Windows and Linux.
 
 Designed for use beside the telescope, it works entirely offline. No account,
 cloud service or internet connection is required.

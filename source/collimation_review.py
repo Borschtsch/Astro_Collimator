@@ -7,12 +7,13 @@ from queue import Empty, Queue
 from threading import Thread
 from time import monotonic
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk, font as tkfont
 
 import cv2
 import numpy as np
 
 from .app_options import OptionsStore, TelescopeProfile
+from .ui_platform import bind_wheel, wheel_direction
 from .feature_detection import (DetectionResult, EdgeCandidate, FEATURE_NAMES,
                                FEATURE_COLORS, required_features, accepts_reference, SOFT_EDGE_WIDTH, analyze_frame, concentric_guides, circle_from_points)
 from .setup_dialog import SetupDialog
@@ -59,7 +60,6 @@ class ReviewTools:
         self.analysis_busy = False
         self.analysis_thread = None
         self.analysis_events = Queue()
-        self.review_guide_visible = None
         self.sidebar = ttk.Frame(self.root)
         self.sidebar.grid(row=0, column=0, sticky="ns", padx=4, pady=5)
         self.profile_label = tk.Label(self.sidebar, text=self.profile.summary,
@@ -92,9 +92,26 @@ class ReviewTools:
         ttk.Label(fov_toolbar, text="Drag its center").pack(side="left")
         self.loading_label = tk.Label(self.sidebar, text="", wraplength=330, justify="left", anchor="w")
         self.loading_label.pack(fill="x", pady=3)
-        self.notebook = ttk.Notebook(self.sidebar)
+        # Draw our tabs with the portable clam element; retain the native theme
+        # for all other controls (including Windows camera widgets).
+        style = ttk.Style(self.root)
+        if "Collimator.tab" not in style.element_names():
+            style.element_create("Collimator.tab", "from", "clam", "tab")
+        style.layout("Collimator.TNotebook.Tab", [
+            ("Collimator.tab", {"sticky": "nswe", "children": [
+                ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
+                    ("Notebook.focus", {"side": "top", "sticky": "nswe", "children": [
+                        ("Notebook.label", {"side": "top", "sticky": ""})]})]})]})])
+        self.tab_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.tab_font.configure(weight="bold")
+        style.configure("Collimator.TNotebook.Tab", font=self.tab_font,
+                        padding=(10, 2), borderwidth=1)
+        style.map("Collimator.TNotebook.Tab",
+                  background=[("selected", "#ffffff"), ("active", "#eaf0f8"), ("!selected", "#dbe2ec")],
+                  foreground=[("selected", "#174a85"), ("!selected", "#303b4b")])
+        self.notebook = ttk.Notebook(self.sidebar, style="Collimator.TNotebook")
         self.notebook.pack(fill="both", expand=True)
-        self.review_panel = ttk.Frame(self.notebook, padding=5)
+        self.review_panel = ttk.Frame(self.notebook, padding=(5, 2))
         self.manual_panel = ttk.Frame(self.notebook)
         self.camera_panel = ttk.Frame(self.notebook)
         self.notebook.add(self.review_panel, text="Detect & review")
@@ -167,7 +184,7 @@ class ReviewTools:
                                      command=lambda: self.resize_review_circle(1))
         self.grow_button.pack(side="left")
         for widget in (self.shrink_button, self.radius_entry, self.grow_button):
-            widget.bind("<MouseWheel>", lambda event: self.resize_review_circle(1 if event.delta > 0 else -1) if event.delta else "break")
+            bind_wheel(widget, lambda event: self.resize_review_circle(wheel_direction(event)) if wheel_direction(event) else "break")
         self.alternative_panel = ttk.Frame(self.review_panel)
         self.candidate_choice = tk.StringVar(value="Not identified")
         ttk.Button(self.alternative_panel, text="‹", width=3, command=lambda: self.cycle_candidate(-1)).pack(side="left")
@@ -302,10 +319,7 @@ class ReviewTools:
         self.picking_role = None
         self.pick_points = []
         self.view_frozen = False
-        if self.review_guide_visible is not None:
-            self.guides_visible.set(self.review_guide_visible)
-            self.on_guide_visibility_changed()
-            self.review_guide_visible = None
+        self.reset_manual_guides()
         self.refresh_review_selection()
         self.review_status.set("Open an image or use the live camera, then detect edges.")
 
@@ -313,10 +327,6 @@ class ReviewTools:
         if not self.view_frozen:
             self.last_frame = self.last_frame.copy()
             self.view_frozen = True
-        if self.review_guide_visible is None:
-            self.review_guide_visible = self.guides_visible.get()
-            self.guides_visible.set(False)
-            self.on_guide_visibility_changed()
 
     def start_detection(self):
         self.live_average.reset()
@@ -330,6 +340,8 @@ class ReviewTools:
         self.freeze_for_review()
         self.detection = None
         self.selections = {}
+        if not self.manual_guides_active:
+            self.reset_manual_guides()
         self.confirmed = set()
         self.manual_points = {}
         self.manual_adjustments = {}

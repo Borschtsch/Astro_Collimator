@@ -44,3 +44,13 @@ Collimator, user settings, historical assertions and previous release artifacts.
 Package rename completed: 51 integration scenarios passed, source startup and
 the existing portable release passed smoke checks. Existing release files were
 preserved; future builds import source. See CONTINUATION.md for details.
+
+## Cross-platform follow-up — 2026-10-07
+
+The shared application now uses native Windows/Linux window/input and capture
+paths. Detailed plan, implemented behavior and native VM handoff are in
+PLATFORM_SUPPORT.md. Shared release assembly is scripts/build_portable.py;
+build_windows.py and build_linux.py invoke it on their respective native OS.
+Outputs now live in dist/<platform>-<architecture> and build checks in matching
+build subfolders. The original flat Windows release is preserved. Linux release
+assembly must run in the Linux desktop VM; Windows builds cannot verify Linux.

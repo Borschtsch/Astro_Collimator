@@ -1,4 +1,4 @@
-"""Build a portable Windows release on Windows; common checks live in build_portable."""
+"""Build a portable Linux release on Linux; common checks live in build_portable."""
 
 import sys
 
@@ -9,6 +9,6 @@ else:
 
 
 if __name__ == "__main__":
-    if sys.platform != "win32":
-        raise SystemExit("Run this builder on Windows; cross-compilation is not supported.")
+    if not sys.platform.startswith("linux"):
+        raise SystemExit("Run this builder on Linux; cross-compilation is not supported.")
     raise SystemExit(main())

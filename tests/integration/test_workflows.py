@@ -5,6 +5,11 @@ tracking or guidance implementation is mocked by these workflows.
 """
 
 import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 import time
 from unittest.mock import patch
@@ -268,3 +273,361 @@ class WorkflowTests(GuiTests):
         np.testing.assert_allclose(raw[app.selections["Camera pupil"]].center, (814, 572), atol=5)
         np.testing.assert_allclose(raw[app.selections["Center mark"]].center, (898, 662), atol=5)
         self.assertEqual(len(set(app.selections.values())), 5)
+
+    def test_linux_wheel_events_adjust_controls_zoom_and_circle_radius(self):
+        from source.camera_properties import PropertyInfo
+        captures = []
+
+        def factory(index):
+            cap = FakeCapture(index, opened=index == 0)
+            cap.values[cv2.CAP_PROP_GAIN] = 7
+            captures.append(cap)
+            return cap
+
+        app = self.make_app(factory, {"Gain": PropertyInfo("supported", 3, 19, 4, 7, 2)})
+        self.wait_until(lambda: app.last_frame is not None)
+        gain = app.camera_controls[cv2.CAP_PROP_GAIN]
+        gain.slider.event_generate("<Button-4>")
+        self.wait_until(lambda: captures[-1].set_calls == [(cv2.CAP_PROP_GAIN, 11)])
+        gain.slider.event_generate("<Button-5>")
+        self.wait_until(lambda: len(captures[-1].set_calls) == 2)
+        self.assertEqual(captures[-1].set_calls[-1], (cv2.CAP_PROP_GAIN, 7))
+        self.assertEqual(app.zoom_factor, 1)
+        self.wait_until(lambda: app.display_transform is not None)
+        app.video_label.event_generate("<Button-4>", x=400, y=300)
+        self.assertAlmostEqual(app.zoom_factor, 1.1)
+        app.video_label.event_generate("<Button-5>", x=400, y=300)
+        self.assertAlmostEqual(app.zoom_factor, 1)
+        self.open_detect_export(pupil_fixture())
+        app.notebook.select(app.review_panel)
+        app.role_buttons["Primary reflection"].invoke()
+        self.root.update()
+        radius = app.detection.candidate(app.selections["Primary reflection"]).radius
+        app.grow_button.event_generate("<Button-4>")
+        self.assertEqual(app.detection.candidate(app.selections["Primary reflection"]).radius, round(radius) + 1)
+        app.shrink_button.event_generate("<Button-5>")
+        self.assertEqual(app.detection.candidate(app.selections["Primary reflection"]).radius, round(radius))
+        app.notebook.select(app.manual_panel)
+        self.root.update()
+        ring = app.ring_controls[0]
+        radius = ring.slider.get()
+        ring.slider.event_generate("<Button-5>")
+        self.assertEqual(ring.slider.get(), radius - 1)
+        ring.slider.event_generate("<Button-4>")
+        self.assertEqual(ring.slider.get(), radius)
+
+    def test_linux_native_query_scan_stream_control_switch_and_export(self):
+        import threading
+        from tests.fixtures.linux_camera import LinuxCameraHardware
+        with LinuxCameraHardware() as hardware:
+            app = self.make_app(None, native_camera=True)
+            try:
+                self.wait_until(lambda: app.last_frame is not None)
+                self.assertEqual(app.camera_list, ["Camera 2", "Camera 14"])
+                gain = app.camera_controls[cv2.CAP_PROP_GAIN]
+                self.assertEqual((gain.slider.cget("from"), gain.slider.cget("to")), (3, 19))
+                self.assertEqual(gain.slider.get(), 7)
+                self.assertFalse(app.camera_controls[cv2.CAP_PROP_EXPOSURE].enabled)
+                self.assertEqual(app.camera_controls[cv2.CAP_PROP_EXPOSURE].info.status, "unsupported")
+                self.assertEqual(app.camera_controls[cv2.CAP_PROP_ZOOM].info.status, "unknown")
+                self.assertFalse(app.camera_controls[cv2.CAP_PROP_FOCUS].enabled)
+                self.assertEqual(app.camera_controls[cv2.CAP_PROP_FOCUS].note.cget("text"), "Automatic only")
+                self.assertTrue(all(cap.set_calls == [(cv2.CAP_PROP_MODE, 0)] for cap in hardware.captures))
+                gain.slider.event_generate("<Button-4>")
+                self.wait_until(lambda: len(hardware.captures[-1].set_calls) == 2)
+                self.assertEqual(hardware.captures[-1].set_calls[-1], (cv2.CAP_PROP_GAIN, 11))
+                app.selected_camera.set("Camera 14")
+                app.camera_dropdown.event_generate("<<ComboboxSelected>>")
+                self.wait_until(lambda: app.camera_controls[cv2.CAP_PROP_GAIN].info.status == "unknown" and app.last_frame is not None)
+                self.assertTrue(gain.enabled)  # malformed driver range keeps numeric fallback
+                self.assertTrue(hardware.queries)
+                self.assertTrue(all(owner != threading.get_ident() for _, _, owner in hardware.queries))
+                self.assertEqual(hardware.closed, [100002, 100014])
+                self.open_detect_export(pupil_fixture())
+                self.assertIn("Camera pupil", app.selections)
+            finally:
+                app.on_closing()
+                app.worker.join(3)
+            self.assertTrue(all(cap.released for cap in hardware.captures))
+
+    def test_linux_query_permission_failure_keeps_stream_and_numeric_controls(self):
+        from tests.fixtures.linux_camera import LinuxCameraHardware
+        with LinuxCameraHardware(permission_denied=True) as hardware:
+            app = self.make_app(None, native_camera=True)
+            try:
+                self.wait_until(lambda: app.last_frame is not None)
+                for control in app.camera_controls.values():
+                    self.assertEqual(control.info.status, "unknown")
+                    self.assertTrue(control.enabled)
+                self.assertFalse(hardware.queries)
+                self.open_detect_export(pupil_fixture())
+                self.assertIn("Camera pupil", app.selections)
+            finally:
+                app.on_closing()
+                app.worker.join(3)
+            self.assertTrue(all(cap.released for cap in hardware.captures))
+
+    def test_source_launcher_preserves_explicit_interpreter_from_another_directory(self):
+        from tests.fixtures.source_checkout import source_checkout, launch_directory
+        with launch_directory() as folder:
+            checkout, interpreter = source_checkout(folder)
+            report = Path(folder) / "source.json"
+            subprocess.run([str(interpreter), str(checkout / "start.py"), "--smoke-test", "--report", str(report)],
+                           cwd=folder, check=True, timeout=45)
+            result = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "passed")
+            self.assertTrue(result["virtual_environment"])
+            self.assertEqual(Path(result["python_executable"]), interpreter)
+            self.assertEqual(Path(result["settings_path"]), checkout / "options.json")
+            self.assertIn("matched raw PNG and JSON export", result["checks"])
+            self.assertFalse((checkout / "options.json").exists())
+
+    def test_source_launcher_reports_missing_dependencies_without_silent_exit(self):
+        from tests.fixtures.source_checkout import source_checkout, launch_directory
+        with launch_directory() as folder:
+            checkout, interpreter = source_checkout(folder, dependencies=False)
+            completed = subprocess.run([str(interpreter), str(checkout / "start.py"), "--smoke-test"],
+                                       cwd=folder, capture_output=True, text=True, encoding="utf-8",
+                                       env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=30)
+            self.assertEqual(completed.returncode, 1)
+            self.assertIn("could not start", completed.stderr)
+            self.assertIn("Install the application dependencies", completed.stderr)
+            log = checkout / "build" / "startup-error.log"
+            self.assertTrue(log.is_file())
+            self.assertIn("ModuleNotFoundError", log.read_text(encoding="utf-8"))
+            self.assertIn("Interpreter: " + str(interpreter), log.read_text(encoding="utf-8"))
+            self.assertIn("Interpreter: " + str(interpreter), completed.stderr)
+            self.assertFalse((checkout / "options.json").exists())
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Explorer file association")
+    def test_explorer_uses_associated_python_without_switching_to_local_venv(self):
+        from tests.fixtures.source_checkout import source_checkout, launch_directory
+        with launch_directory() as folder:
+            checkout, interpreter = source_checkout(folder, dependencies=False)
+            for entry in ("start.py",):
+                with self.subTest(entry=entry):
+                    report = Path(folder) / (entry + ".json")
+                    arguments = '--smoke-test --report "' + str(report) + '"'
+                    os.startfile(str(checkout / entry), "open", arguments, folder)
+                    deadline = time.monotonic() + 45
+                    while not report.exists() and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    self.assertTrue(report.exists(), "Explorer launch did not produce the app report")
+                    result = json.loads(report.read_text(encoding="utf-8"))
+                    # The report is written after app shutdown, just before the
+                    # interpreter exits. Wait for this owned child before venv cleanup.
+                    import ctypes as ct
+                    kernel = ct.WinDLL("kernel32", use_last_error=True)
+                    kernel.OpenProcess.argtypes = (ct.c_uint32, ct.c_int, ct.c_uint32)
+                    kernel.OpenProcess.restype = ct.c_void_p
+                    kernel.WaitForSingleObject.argtypes = (ct.c_void_p, ct.c_uint32)
+                    kernel.WaitForSingleObject.restype = ct.c_uint32
+                    kernel.CloseHandle.argtypes = (ct.c_void_p,)
+                    handle = kernel.OpenProcess(0x00100000, False, result["process_id"])
+                    if handle:
+                        try:
+                            self.assertEqual(kernel.WaitForSingleObject(handle, 10000), 0)
+                        finally:
+                            kernel.CloseHandle(handle)
+                    self.assertEqual(result["status"], "passed")
+                    self.assertNotEqual(Path(result["python_executable"]), interpreter)
+                    self.assertEqual(Path(result["python_executable"]).name.lower(), "python.exe")
+                    self.assertTrue(result["console_attached"])
+                    self.assertFalse(result["console_window_visible"])
+                    self.assertIn("Tk rendering", result["checks"])
+                    self.assertIn("matched raw PNG and JSON export", result["checks"])
+                    self.assertFalse((checkout / "options.json").exists())
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows shared console")
+    def test_source_launcher_preserves_console_shared_with_another_process(self):
+        from tests.fixtures.source_checkout import source_checkout, launch_directory
+        with launch_directory() as folder:
+            checkout, interpreter = source_checkout(folder)
+            report = checkout / "shared-console.json"
+            helper = checkout / "terminal_parent.py"
+            helper.write_text(
+                "import subprocess, sys\n"
+                "raise SystemExit(subprocess.call([sys.executable, 'start.py', "
+                "'--smoke-test', '--report', 'shared-console.json']))\n",
+                encoding="utf-8")
+            # An actual parent and app share a new native console. Do not mock
+            # console ownership or visibility; run the complete app workflow.
+            subprocess.run([str(interpreter), str(helper)], cwd=checkout,
+                           creationflags=subprocess.CREATE_NEW_CONSOLE, check=True, timeout=45)
+            result = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(Path(result["python_executable"]), interpreter)
+            self.assertTrue(result["console_window_visible"])
+            self.assertIn("Tk rendering", result["checks"])
+            self.assertIn("matched raw PNG and JSON export", result["checks"])
+            self.assertFalse((checkout / "options.json").exists())
+
+    def test_opened_image_wheel_zoom_and_margin_pan_preserve_optical_geometry(self):
+        app = self.make_app(lambda index: FakeCapture(index, opened=False))
+        self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
+        self.open_detect_export(optical_fixture())
+        app.notebook.select(app.review_panel)
+        self.wait_until(lambda: app.display_transform is not None)
+        detection = app.detection
+        raw = app.last_frame.copy()
+        for sequence, direction in (("<MouseWheel>", 1), ("<Button-4>", 1), ("<Button-5>", -1)):
+            with self.subTest(sequence=sequence):
+                before = app.zoom_factor
+                transform = app.display_transform
+                x = (app.video_label.winfo_width() - app.video_width) // 2 + transform.width // 2
+                y = (app.video_label.winfo_height() - app.video_height) // 2 + transform.height // 2
+                app.video_label.event_generate(sequence, x=x, y=y, state=0,
+                                               **({"delta": 120} if sequence == "<MouseWheel>" else {}))
+                self.assertAlmostEqual(app.zoom_factor, before + .1 * direction)
+                expected_width = int(raw.shape[1] / app.zoom_factor)
+                self.wait_until(lambda: app.display_transform.crop_width == expected_width)
+        # Zoom further entirely through widget events, then start a drag in
+        # the letterbox margin rather than touching a guide or source pixel.
+        for _ in range(9):
+            app.video_label.event_generate("<MouseWheel>", x=x, y=y, delta=120, state=0)
+            self.root.update()
+        self.wait_until(lambda: app.display_transform.crop_width < 420)
+        transform = app.display_transform
+        ox = (app.video_label.winfo_width() - app.video_width) // 2
+        oy = (app.video_label.winfo_height() - app.video_height) // 2
+        self.assertGreater(max(ox, oy), 10)
+        x, y = (2, app.video_label.winfo_height() // 2) if ox > 10 else (app.video_label.winfo_width() // 2, 2)
+        app.video_label.event_generate("<ButtonPress-1>", x=x, y=y, state=0)
+        self.assertIsNotNone(app.pan_anchor)
+        self.assertIsNone(app.circle_drag)
+        app.video_label.event_generate("<B1-Motion>", x=x + 40, y=y + 25, state=0x100)
+        app.video_label.event_generate("<ButtonRelease-1>", x=x + 40, y=y + 25, state=0)
+        self.wait_until(lambda: app.display_transform.crop_x != transform.crop_x)
+        self.assertAlmostEqual(app.display_transform.crop_x,
+                               transform.crop_x - 40 * transform.crop_width / transform.width, delta=1)
+        self.assertIsNone(app.pan_anchor)
+        self.assertEqual(app.detection, detection)
+        np.testing.assert_array_equal(app.last_frame, raw)
+        app.view_reset_button.invoke()
+        self.wait_until(lambda: app.display_transform.crop_width == raw.shape[1])
+        self.assertEqual((app.display_transform.crop_x, app.display_transform.crop_y), (0, 0))
+        self.assertIsNone(app.view_center)
+        self.assertEqual(app.detection, detection)
+
+    def test_opened_image_precise_scroll_decodes_both_axes_and_preserves_editing(self):
+        app = self.make_app(lambda index: FakeCapture(index, opened=False))
+        if not self.root.tk.call("info", "commands", "::tk::PreciseScrollDeltas"):
+            self.skipTest("Tk does not provide high-resolution scroll events")
+        self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
+        self.open_detect_export(optical_fixture())
+        app.notebook.select(app.review_panel)
+        self.wait_until(lambda: app.display_transform is not None)
+        detection = app.detection
+        original = app.last_frame.copy()
+        ox = (app.video_label.winfo_width() - app.video_width) // 2
+        oy = (app.video_label.winfo_height() - app.video_height) // 2
+        x, y = ox + app.video_width // 2, oy + app.video_height // 2
+        fine_step = .025 if self.root.tk.call("tk", "windowingsystem") == "win32" else .1
+        for horizontal, vertical in ((0, 30), (5, -30), (-5, 0)):
+            before = app.zoom_factor
+            packed = (horizontal << 16) | (vertical & 0xffff)
+            app.video_label.event_generate("<TouchpadScroll>", x=x, y=y, delta=packed, state=0)
+            expected = before + fine_step * ((vertical > 0) - (vertical < 0))
+            self.assertAlmostEqual(app.zoom_factor, expected)
+            self.root.update()
+        self.assertEqual(app.detection, detection)
+        np.testing.assert_array_equal(app.last_frame, original)
+        edge = app.detection.candidate(app.selections["Primary reflection"])
+        point = app.display_transform.to_display((edge.center[0] + edge.radius, edge.center[1]))
+        ox = (app.video_label.winfo_width() - app.video_width) // 2
+        oy = (app.video_label.winfo_height() - app.video_height) // 2
+        before_zoom = app.zoom_factor
+        app.video_label.event_generate("<TouchpadScroll>", x=round(ox + point[0]), y=round(oy + point[1]),
+                                       delta=(-30 & 0xffff), state=0x0004)
+        self.assertEqual(app.detection.candidate(edge.id).radius, round(edge.radius) - 1)
+        self.assertEqual(app.zoom_factor, before_zoom)
+        self.assertEqual(app.detection.guide_center, detection.guide_center)
+        output = app.export_capture(app.options_store.path.with_name("precise-scroll.png"))
+        np.testing.assert_array_equal(cv2.imdecode(np.frombuffer(output.read_bytes(), np.uint8), 1), original)
+
+    @unittest.skipUnless(sys.platform == "win32", "Native Windows wheel delivery")
+    def test_native_windows_fine_wheel_reaches_image_with_sidebar_focus(self):
+        import ctypes as ct
+        app = self.make_app(lambda index: FakeCapture(index, opened=False))
+        if not self.root.tk.call("info", "commands", "::tk::PreciseScrollDeltas"):
+            self.skipTest("Tk does not provide high-resolution scroll events")
+        self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
+        self.open_detect_export(optical_fixture())
+        app.notebook.select(app.review_panel)
+        self.wait_until(lambda: app.display_transform is not None)
+        detection = app.detection
+        original = app.last_frame.copy()
+        # Native Tk routes Windows wheel messages by hit-testing the visible
+        # window. Unlike event_generate, this needs an opaque mapped window.
+        self.root.attributes("-alpha", 1)
+        self.root.lift()
+        self.root.update()
+        user = ct.WinDLL("user32")
+        user.SendMessageW.argtypes = (ct.c_void_p, ct.c_uint32, ct.c_size_t, ct.c_ssize_t)
+        user.SendMessageW.restype = ct.c_ssize_t
+        x = app.video_label.winfo_rootx() + app.video_label.winfo_width() // 2
+        y = app.video_label.winfo_rooty() + app.video_label.winfo_height() // 2
+        position = (x & 0xffff) | ((y & 0xffff) << 16)
+        for focused in (app.video_label, app.view_reset_button):
+            focused.focus_force()
+            self.root.update()
+            for delta in (30, -30, 120, -120):
+                with self.subTest(focus=str(focused), delta=delta):
+                    before = app.zoom_factor
+                    # Send only to this owned app's HWND. Production Windows
+                    # message translation, Tk routing and zoom handlers run.
+                    user.SendMessageW(focused.winfo_id(), 0x020A, (delta & 0xffff) << 16, position)
+                    expected = before + .1 * delta / 120
+                    self.wait_until(lambda: abs(app.zoom_factor - expected) < 1e-8)
+                    self.wait_until(lambda: app.display_transform.crop_width == int(original.shape[1] / expected))
+        before = app.zoom_factor
+        user.SendMessageW(app.video_label.winfo_id(), 0x020E, 30 << 16, position)
+        self.root.update()
+        self.assertAlmostEqual(app.zoom_factor, before)  # Horizontal input does not zoom.
+        self.assertEqual(app.detection, detection)
+        np.testing.assert_array_equal(app.last_frame, original)
+
+    def test_opened_image_scroll_enlarges_rendered_pixels_and_records_input_path(self):
+        from PIL import ImageTk
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+                "ASTRO_COLLIMATOR_INPUT_LOG": str(Path(directory) / "input.json")}):
+            app = self.make_app(lambda index: FakeCapture(index, opened=False))
+            self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
+            frame = optical_fixture()
+            frame[310:330, 460:490] = (250, 210, 10)
+            self.open_detect_export(frame)
+            app.notebook.select(app.review_panel)
+            app.overlays_visible.set(False)
+            self.wait_until(lambda: app.display_transform is not None)
+            # Inspect the actual Tk image pixels, not only zoom/crop metadata.
+            def colored_area():
+                pixels = np.asarray(ImageTk.getimage(app.video_label.image))
+                return int(np.count_nonzero((pixels[:, :, 0] < 30) &
+                                            (pixels[:, :, 1] > 180) & (pixels[:, :, 2] > 200)))
+            self.wait_until(lambda: colored_area() > 200)
+            before = colored_area()
+            detection = app.detection
+            for _ in range(10):
+                x = app.video_label.winfo_width() // 2
+                y = app.video_label.winfo_height() // 2
+                app.video_label.event_generate("<MouseWheel>", x=x, y=y, delta=120, state=0)
+                expected_width = int(frame.shape[1] / app.zoom_factor)
+                self.wait_until(lambda: app.display_transform.crop_width == expected_width)
+            self.wait_until(lambda: colored_area() > before * 3.5)
+            self.assertLess(colored_area(), before * 4.5)
+            self.assertEqual(app.detection, detection)
+            np.testing.assert_array_equal(app.last_frame, frame)
+            path = Path(directory) / "input.json"
+            self.wait_until(lambda: len(json.loads(path.read_text(encoding="utf-8"))["events"]) >= 10)
+            report = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(Path(report["runtime"]["interpreter"]), Path(sys.executable))
+            self.assertEqual(Path(report["runtime"]["source"]).parent.name, "source")
+            events = report["events"]
+            self.assertLessEqual(len(events), 40)
+            self.assertEqual(events[-1]["callback"], "WebcamApp.zoom_with_scroll")
+            self.assertEqual(events[-1]["state"], 0)
+            self.assertEqual(events[-1]["raw_delta"], 120)
+            self.assertGreater(events[-1]["after"]["zoom"], events[-1]["before"]["zoom"])
+            self.assertEqual(events[-1]["after"]["radii"], events[-1]["before"]["radii"])
+            output = app.export_capture(Path(directory) / "zoomed.png")
+            np.testing.assert_array_equal(cv2.imdecode(np.frombuffer(output.read_bytes(), np.uint8), 1), frame)

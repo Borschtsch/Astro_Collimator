@@ -2,12 +2,14 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import cv2
 import math
+from dataclasses import replace
 import sys
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
 from PIL import Image, ImageTk
 from .camera_properties import PropertyInfo, query_camera_properties
+from .ui_platform import bind_wheel, wheel_direction, window_state, set_window_state
 from .collimation_review import ReviewTools
 from .feature_detection import DisplayTransform, draw_detection
 
@@ -16,7 +18,20 @@ def open_camera(index):
     # Keep native capability queries and capture on the same device ordering.
     if sys.platform == "win32":
         return cv2.VideoCapture(index, cv2.CAP_DSHOW)
+    if sys.platform.startswith("linux"):
+        capture = cv2.VideoCapture(f"/dev/video{index}", cv2.CAP_V4L2)
+        if capture.isOpened():
+            # Native queried ranges and get/set must use identical driver units.
+            capture.set(cv2.CAP_PROP_MODE, 0)
+        return capture
     return cv2.VideoCapture(index)
+
+
+def camera_indices(max_cameras=10):
+    if sys.platform.startswith("linux"):
+        from .linux_camera import camera_indices as linux_indices
+        return linux_indices()
+    return range(max_cameras)
 
 
 class CameraWorker(Thread):
@@ -29,6 +44,7 @@ class CameraWorker(Thread):
             query_camera_properties if capture_factory is None else lambda index: {})
         self.capabilities = {}
         self.max_cameras = max_cameras
+        self.index_provider = camera_indices if capture_factory is None else lambda count: range(count)
         self.commands = Queue()
         self.events = Queue()
         self.frames = Queue(maxsize=1)
@@ -51,7 +67,8 @@ class CameraWorker(Thread):
 
         if action == "scan":
             cameras = []
-            for index in range(self.max_cameras):
+            indices = self.index_provider(self.max_cameras)
+            for index in indices:
                 if self.stop_event.is_set():
                     return
                 cap = None
@@ -75,7 +92,7 @@ class CameraWorker(Thread):
             self.capture = self.capture_factory(data)
             if not self.capture.isOpened():
                 self.release_camera()
-                self.events.put((session, "error", "Failed to open the camera. Try Refresh cameras."))
+                self.events.put((session, "error", "Failed to open the camera. Check connection/access, close other camera apps, then Refresh cameras."))
                 return
             values = {}
             for prop in CAMERA_PROPERTIES:
@@ -166,7 +183,7 @@ NEWTONIAN_GUIDES = (
 )
 NEWTONIAN_HINT = (
     "Fit Focuser edge first, then Secondary edge and Primary reflection. "
-    "Preset sizes: resize each to its visible edge."
+    "Missing guides are size estimates: resize them to the visible edges."
 )
 NEWTONIAN_HELP = (
     "1. Fit the orange Focuser edge guide to the inside rim of the focuser or sight tube. "
@@ -228,7 +245,7 @@ class CameraControl(tk.Frame):
         self.note = tk.Label(self, text="", anchor="w", wraplength=185, justify="left")
         self.note.grid(row=0, column=1, sticky="w")
         for widget in (self, self.slider, self.numeric, self.entry, self.button, self.note):
-            widget.bind("<MouseWheel>", self.scroll)
+            bind_wheel(widget, self.scroll)
         for key, direction in (("Left", -1), ("Down", -1), ("Right", 1), ("Up", 1)):
             self.slider.bind(f"<{key}>", lambda event, d=direction: self.step_value(d))
         self.configure_for_camera(PropertyInfo(), None, False)
@@ -304,8 +321,9 @@ class CameraControl(tk.Frame):
         return "break"
 
     def scroll(self, event):
-        if event.delta:
-            self.step_value(1 if event.delta > 0 else -1)
+        direction = wheel_direction(event)
+        if direction:
+            self.step_value(direction)
         return "break"  # Do not also change the video's digital zoom.
 
 
@@ -323,13 +341,14 @@ class RingControl(tk.Frame):
                                        width=17, anchor="w")
         self.checkbox.grid(row=0, column=1, sticky="w")
         tk.Button(self, text="−", width=2, command=lambda: self.resize(-1)).grid(row=0, column=2)
-        self.slider = tk.Scale(self, from_=10, to=400, orient=tk.HORIZONTAL,
-                               length=95, showvalue=False, width=10)
+        self.radius_value = tk.IntVar(value=radius)
+        self.slider = tk.Scale(self, from_=1, to=400, orient=tk.HORIZONTAL,
+                               length=95, showvalue=False, width=10, variable=self.radius_value)
         self.slider.grid(row=0, column=3)
         self.slider.set(radius)
         tk.Button(self, text="+", width=2, command=lambda: self.resize(1)).grid(row=0, column=4)
         for widget in (self, self.checkbox, self.slider):
-            widget.bind("<MouseWheel>", self.scroll)
+            bind_wheel(widget, self.scroll)
         for key, direction in (("Left", -1), ("Down", -1), ("Right", 1), ("Up", 1)):
             self.slider.bind(f"<{key}>", lambda event, d=direction: self.resize(d))
 
@@ -338,15 +357,16 @@ class RingControl(tk.Frame):
         return "break"
 
     def scroll(self, event):
-        if event.delta:
-            self.resize(1 if event.delta > 0 else -1)
+        direction = wheel_direction(event)
+        if direction:
+            self.resize(direction)
         return "break"
 
 
 class WebcamApp(ReviewTools):
     def __init__(self, root, options_store=None):
         self.root = root
-        self.root.geometry("1300x750")
+        self.root.geometry(f"{min(1300, root.winfo_screenwidth())}x{min(750, root.winfo_screenheight())}")
         self.fullscreen = False
         self.root.attributes("-fullscreen", False)
         self.windowed_state = "zoomed"
@@ -408,12 +428,16 @@ class WebcamApp(ReviewTools):
         tk.Checkbutton(guide_actions, text="Show guides", variable=self.guides_visible,
                        command=self.on_guide_visibility_changed).grid(row=0, column=0)
         ttk.Button(guide_actions, text="How to use", command=self.show_guide_help).grid(row=0, column=1, padx=5)
+        self.manual_guides_active = False
+        self.manual_guide_edits = set()
+        self.syncing_manual_guides = False
         self.ring_controls = []
         for index, (name, color, radius) in enumerate(NEWTONIAN_GUIDES):
             ring = RingControl(self.guides_frame, color, radius)
             ring.name.set(name)
             ring.grid(row=index + 1, column=0, padx=4, sticky="w")
             self.ring_controls.append(ring)
+            ring.radius_value.trace_add("write", lambda *args, r=ring: self.manual_radius_changed(r))
         self.guide_hint = tk.Label(self.guides_frame, text=NEWTONIAN_HINT, wraplength=300, justify="left", anchor="w")
         self.guide_hint.grid(row=4, column=0, padx=5, pady=4, sticky="w")
 
@@ -454,7 +478,7 @@ class WebcamApp(ReviewTools):
         # Video display area
         self.video_label = tk.Label(root, background="black", foreground="white", text="No camera image")
         self.video_label.grid(row=0, column=1, padx=5, sticky="nsew")
-        self.video_label.bind("<MouseWheel>", self.zoom_with_scroll)
+        bind_wheel(self.video_label, self.zoom_with_scroll)
         self.video_label.bind("<Motion>", self.hover_image)
         self.video_label.bind("<Leave>", lambda event: self.video_label.config(cursor="") if self.pan_anchor is None else None)
         for button in (1, 2):
@@ -476,7 +500,8 @@ class WebcamApp(ReviewTools):
         self.root.grid_rowconfigure(0, weight=1)
 
         # Initialize crosshair state
-        self.show_crosshair = self.guides_visible.get()
+        self.show_crosshair = False
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_guide_tab_changed)
 
         # Set initial video dimensions to match the window size
         scaling = 1.5
@@ -490,7 +515,7 @@ class WebcamApp(ReviewTools):
         self.root.update_idletasks()
         self.sidebar.config(width=max(350, self.sidebar.winfo_reqwidth()))
         self.sidebar.pack_propagate(False)
-        self.root.state("zoomed")
+        set_window_state(self.root, "zoomed")
         self.worker.start()
         self.refresh_cameras()
         self.after_id = self.root.after(30, self.update_frame)
@@ -554,7 +579,8 @@ class WebcamApp(ReviewTools):
                             clamped.crop_y + clamped.crop_height / 2)
 
     def zoom_with_scroll(self, event):
-        if not event.delta or self.last_frame is None or self.display_transform is None:
+        direction = wheel_direction(event)
+        if not direction or self.last_frame is None or self.display_transform is None:
             return "break"
         transform = self.display_transform
         if getattr(event, "state", 0) & 0x0004:  # Control: edit the hovered circle, not the viewport.
@@ -563,7 +589,7 @@ class WebcamApp(ReviewTools):
             if (anchor is not None and anchor[3] == self.session
                     and math.dist(point, anchor[:2]) <= 12 and anchor[2] in self.selections):
                 self.select_review_role(anchor[2])
-                self.resize_review_circle(1 if event.delta > 0 else -1)
+                self.resize_review_circle(direction)
                 return "break"
             hit = self.circle_at(point, include_fov=False)
             if hit is not None:
@@ -572,9 +598,10 @@ class WebcamApp(ReviewTools):
                     if role:
                         self.resize_hover_anchor = (*point, role, self.session)
                         self.select_review_role(role)
-                        self.resize_review_circle(1 if event.delta > 0 else -1)
+                        self.resize_review_circle(direction)
                 elif hit.get("ring") is not None:
-                    hit["ring"].resize(1 if event.delta > 0 else -1)
+                    self.manual_guide_edits.add(hit["ring"].name.get())
+                    hit["ring"].resize(direction)
             return "break"
         self.pan_anchor = None
         self.pan_dragged = False
@@ -582,7 +609,10 @@ class WebcamApp(ReviewTools):
         self.circle_drag = None
         self.resize_hover_anchor = None
         self.video_label.config(cursor="")
-        self.zoom_factor = max(1.0, min(3.0, self.zoom_factor + (0.1 if event.delta > 0 else -0.1)))
+        amount = direction
+        if getattr(event, "precise_scroll", False) and self.root.tk.call("tk", "windowingsystem") == "win32":
+            amount = event.delta / 120
+        self.zoom_factor = max(1.0, min(3.0, self.zoom_factor + 0.1 * amount))
         if hasattr(event, "x") and hasattr(event, "y"):
             x, y = self.image_position(event)
         else:
@@ -667,7 +697,7 @@ class WebcamApp(ReviewTools):
         if self.detection is not None:
             hits = []
             selected_id = self.selections.get(self.review_role.get())
-            for edge in self.detection.candidates:
+            for edge in self.visible_detection().candidates:
                 if edge.id not in self.selections.values() and not self.show_candidates.get():
                     continue
                 center = transform.to_display(edge.center)
@@ -695,6 +725,7 @@ class WebcamApp(ReviewTools):
         if self.show_crosshair:
             distance = math.hypot(point[0] - self.crosshair_x, point[1] - self.crosshair_y)
             ring = min((ring for ring in self.ring_controls if ring.visible.get()
+                        and ring.name.get() not in self.selections
                         and abs(distance - ring.slider.get()) <= 12),
                        key=lambda ring: abs(distance - ring.slider.get()), default=None)
             if distance <= 12 or ring is not None:
@@ -707,20 +738,21 @@ class WebcamApp(ReviewTools):
         transform = self.display_transform
         if self.last_frame is not None and transform is not None:
             x, y = self.image_position(event)
-            if 0 <= x < transform.width and 0 <= y < transform.height:
-                if self.source_mode == "camera" and self.camera_on:
-                    self.view_frozen = True
-                    self.live_average.reset()
-                    self.analysis_generation += 1
-                self.pan_anchor = (event.x, event.y, transform)
-                if getattr(event, "num", None) == 1:
-                    self.pan_click_token = (self.session, self.analysis_generation)
-                    self.circle_drag = self.circle_at((x, y))
-                    if self.circle_drag is not None and self.circle_drag["kind"] == "candidate":
-                        role = next((name for name, candidate_id in self.selections.items()
-                                     if candidate_id == self.circle_drag["edge"].id), None)
-                        if role is not None:
-                            self.select_review_role(role)
+            # The entire black viewport is pan space. Optical hit testing
+            # still ignores margins, so dragging there cannot move a guide.
+            if self.source_mode == "camera" and self.camera_on:
+                self.view_frozen = True
+                self.live_average.reset()
+                self.analysis_generation += 1
+            self.pan_anchor = (event.x, event.y, transform)
+            if getattr(event, "num", None) == 1:
+                self.pan_click_token = (self.session, self.analysis_generation)
+                self.circle_drag = self.circle_at((x, y))
+                if self.circle_drag is not None and self.circle_drag["kind"] == "candidate":
+                    role = next((name for name, candidate_id in self.selections.items()
+                                 if candidate_id == self.circle_drag["edge"].id), None)
+                    if role is not None:
+                        self.select_review_role(role)
         return "break"
 
     def pan_image(self, event):
@@ -760,12 +792,12 @@ class WebcamApp(ReviewTools):
     def set_fullscreen(self, enabled):
         enabled = bool(enabled)
         if enabled and not self.fullscreen:
-            self.windowed_state = self.root.state()
+            self.windowed_state = window_state(self.root)
         was_fullscreen = self.fullscreen
         self.fullscreen = enabled
         self.root.attributes("-fullscreen", self.fullscreen)
         if was_fullscreen and not enabled:
-            self.root.state(self.windowed_state)
+            set_window_state(self.root, self.windowed_state)
         self.fullscreen_button.config(text="Windowed" if self.fullscreen else "Fullscreen")
         return "break"
 
@@ -798,8 +830,85 @@ class WebcamApp(ReviewTools):
             parent=self.root,
         )
 
+    def on_guide_tab_changed(self, event=None):
+        self.end_pan()
+        if self.notebook.select() == str(self.manual_panel):
+            self.manual_guides_active = True
+            self.guides_visible.set(True)
+            for ring in self.ring_controls:
+                ring.visible.set(True)
+        self.on_guide_visibility_changed()
+        self.sync_manual_guides()
+
     def on_guide_visibility_changed(self):
-        self.show_crosshair = self.guides_visible.get()
+        self.show_crosshair = self.guides_visible.get() and self.manual_guides_active
+
+    def reset_manual_guides(self):
+        if not hasattr(self, "ring_controls"):
+            return
+        self.manual_guides_active = self.notebook.select() == str(self.manual_panel)
+        self.manual_guide_edits.clear()
+        self.syncing_manual_guides = True
+        try:
+            for ring, (_, _, radius) in zip(self.ring_controls, NEWTONIAN_GUIDES):
+                ring.slider.set(radius)
+        finally:
+            self.syncing_manual_guides = False
+        self.on_guide_visibility_changed()
+
+    def sync_manual_guides(self):
+        """Estimate missing manual rings; never report estimates as detections."""
+        if not self.show_crosshair or self.display_transform is None:
+            return
+        scale = self.display_transform.width / self.display_transform.crop_width
+        anchors = {}
+        for index, ring in enumerate(self.ring_controls):
+            edge = self.detection.candidate(self.selections.get(ring.name.get())) if self.detection else None
+            if edge is not None:
+                anchors[index] = edge.radius * scale
+        defaults = [item[2] for item in NEWTONIAN_GUIDES]
+        self.syncing_manual_guides = True
+        try:
+            for index, ring in enumerate(self.ring_controls):
+                if index in anchors:
+                    radius = anchors[index]
+                elif ring.name.get() in self.manual_guide_edits or not anchors:
+                    continue
+                else:
+                    below = max((i for i in anchors if i < index), default=None)
+                    above = min((i for i in anchors if i > index), default=None)
+                    if below is not None and above is not None:
+                        fraction = (index - below) / (above - below)
+                        radius = anchors[below] * (anchors[above] / anchors[below]) ** fraction
+                    else:
+                        nearest = min(anchors, key=lambda i: abs(index - i))
+                        radius = anchors[nearest] * defaults[index] / defaults[nearest]
+                radius = max(1, round(radius))
+                ring.slider.config(to=max(400, radius))
+                ring.slider.set(radius)
+        finally:
+            self.syncing_manual_guides = False
+
+    def manual_radius_changed(self, ring):
+        # Hidden Tk scales may rewrite their variables during layout. Only
+        # controls on the active manual tab can edit measured references.
+        if self.syncing_manual_guides or self.notebook.select() != str(self.manual_panel):
+            return
+        role = ring.name.get()
+        self.manual_guide_edits.add(role)
+        if role in self.selections and self.display_transform is not None:
+            scale = self.display_transform.width / self.display_transform.crop_width
+            edge = self.detection.candidate(self.selections[role])
+            if ring.slider.get() == round(edge.radius * scale):
+                return
+            self.review_role.set(role)
+            self.set_review_radius(max(2, round(ring.slider.get() / scale)))
+
+    def visible_detection(self):
+        if not self.show_crosshair:
+            return self.detection
+        hidden = {self.selections.get(ring.name.get()) for ring in self.ring_controls if not ring.visible.get()}
+        return replace(self.detection, candidates=tuple(edge for edge in self.detection.candidates if edge.id not in hidden))
 
     def toggle_crosshair(self):
         self.guides_visible.set(not self.guides_visible.get())
@@ -931,26 +1040,32 @@ class WebcamApp(ReviewTools):
                                                      self.display_transform.to_display(original_center))
                 scale = ((self.display_transform.width / self.display_transform.crop_width) /
                          (previous_transform.width / previous_transform.crop_width))
-                for ring in self.ring_controls:
-                    radius = round(ring.slider.get() * scale)
-                    ring.slider.config(to=max(400, math.ceil(400 * self.zoom_factor), radius))
-                    ring.slider.set(radius)
+                self.syncing_manual_guides = True
+                try:
+                    for ring in self.ring_controls:
+                        radius = round(ring.slider.get() * scale)
+                        ring.slider.config(to=max(400, math.ceil(400 * self.zoom_factor), radius))
+                        ring.slider.set(radius)
+                finally:
+                    self.syncing_manual_guides = False
             elif previous_transform is None:
                 self.crosshair_x = round(self.crosshair_x * width / self.video_width)
                 self.crosshair_y = round(self.crosshair_y * height / self.video_height)
             self.video_width, self.video_height = width, height
             if self.detection is not None and self.detection.guide_center is not None:
                 self.crosshair_x, self.crosshair_y = (round(v) for v in self.display_transform.to_display(self.detection.guide_center))
+            self.sync_manual_guides()
+            # Optical guide markers stay above the independent FOV reference.
+            self.draw_fov_crosshair(frame, self.display_transform)
             if self.show_crosshair and self.overlays_shown():
                 center = (self.crosshair_x, self.crosshair_y)
                 for ring in self.ring_controls:
-                    if ring.visible.get():
+                    if ring.visible.get() and ring.name.get() not in self.selections:
                         cv2.circle(frame, center, ring.slider.get(), ring.color, 1)
             if self.detection is not None and self.overlays_shown():
-                draw_detection(frame, self.detection, self.selections, self.confirmed,
+                draw_detection(frame, self.visible_detection(), self.selections, self.confirmed,
                                self.display_transform, self.show_candidates.get(),
                                self.selections.get(self.review_role.get()))
-            self.draw_fov_crosshair(frame, self.display_transform)
             for point in self.pick_points if self.overlays_shown() else ():
                 center = tuple(round(value) for value in self.display_transform.to_display(point))
                 cv2.drawMarker(frame, center, (255, 255, 255), cv2.MARKER_TILTED_CROSS, 10, 1)

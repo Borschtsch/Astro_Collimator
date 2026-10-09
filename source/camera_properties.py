@@ -1,4 +1,4 @@
-"""Read Windows camera capabilities without setting any camera values.
+"""Read Windows/Linux camera capabilities without setting any camera values.
 
 OpenCV's DirectShow backend and this module both use the system video-device
 moniker order. Call only on the camera worker, before opening the video stream.
@@ -162,10 +162,16 @@ def _read_interface_properties(capture_filter, interface_id, properties):
 def query_camera_properties(camera_index):
     """Return driver ranges by control name, or unknown on query failure.
 
-    Only use with CAP_DSHOW: other backends may enumerate devices differently.
+    Use with CAP_DSHOW on Windows and CAP_V4L2 on Linux.
+    Linux exposure values use native 100-microsecond units.
     Generic failures never masquerade as proof that a property is unsupported.
     """
-    if sys.platform != "win32" or camera_index < 0:
+    if camera_index < 0:
+        return {}
+    if sys.platform.startswith("linux"):
+        from .linux_camera import query_camera_properties as query_linux
+        return query_linux(camera_index)
+    if sys.platform != "win32":
         return {}
     try:
         with _com_apartment() as ole, _device_filter(ole, camera_index) as capture_filter:

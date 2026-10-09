@@ -7,3 +7,4 @@
 - Preserve existing UTF-8 BOM state and line endings when editing text files.
 - Integration checks must retain the previous behavioral and failure-case coverage; maintain a coverage mapping and report any gaps explicitly. Test count alone does not demonstrate equivalent coverage.
 - Source entry: start.py. Keep application code in source/, active scenarios in tests/integration/, and fixtures in tests/fixtures/. Run integration validation with python -B scripts/test_integration.py. Historical cases remain in tests/legacy/.
+- Platform support: keep start.py and source/ shared by Windows and Linux. Build portable releases on their native OS. Native Linux GUI/camera/release validation requires a real Linux desktop VM; record unvalidated platform behavior explicitly.

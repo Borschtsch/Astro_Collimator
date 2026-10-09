@@ -1,6 +1,8 @@
 """Release smoke workflow through the real application, without camera hardware."""
 
 import json
+import os
+import sys
 from pathlib import Path
 import tempfile
 import time
@@ -12,6 +14,7 @@ def smoke_test(report_path):
     import numpy as np
     from PIL import ImageTk
     from .app import WebcamApp
+    from .ui_platform import window_state, set_window_state
     from .app_options import OptionsStore, TelescopeProfile, default_options_path
     from . import app as app_module, __version__
 
@@ -23,7 +26,19 @@ def smoke_test(report_path):
             pass
 
     result = {"version": __version__, "status": "failed",
-              "settings_path": str(default_options_path())}
+              "settings_path": str(default_options_path()),
+              "python_executable": sys.executable,
+              "process_id": os.getpid(),
+              "virtual_environment": sys.prefix != sys.base_prefix,
+              "console_attached": sys.stdout is not None}
+    if sys.platform == "win32":
+        import ctypes as ct
+        kernel, user = ct.WinDLL("kernel32"), ct.WinDLL("user32")
+        kernel.GetConsoleWindow.restype = ct.c_void_p
+        user.IsWindowVisible.argtypes = (ct.c_void_p,)
+        user.IsWindowVisible.restype = ct.c_int
+        console = kernel.GetConsoleWindow()
+        result["console_window_visible"] = bool(console and user.IsWindowVisible(console))
     root = app = None
     old_factory = app_module.open_camera
     try:
@@ -35,9 +50,13 @@ def smoke_test(report_path):
             root = tk.Tk()
             root.attributes("-alpha", 0)
             app = WebcamApp(root, OptionsStore(directory / "options.json"))
-            assert root.state() == "zoomed"
+            deadline = time.monotonic() + 3
+            while window_state(root) != "zoomed" and time.monotonic() < deadline:
+                root.update()
+                time.sleep(.01)
+            assert window_state(root) == "zoomed", "Desktop window manager did not maximize the application"
             assert not root.attributes("-fullscreen")
-            root.state("normal")
+            set_window_state(root, "normal")
             root.geometry("1024x768")
             app.fov_crosshair_visible.set(False)
             app.notebook.select(app.review_panel)

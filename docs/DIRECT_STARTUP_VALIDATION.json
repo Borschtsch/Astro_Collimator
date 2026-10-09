@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-07",
+  "launch_mode": "direct associated/caller interpreter",
+  "cmd_removed": true,
+  "automatic_interpreter_switching": false,
+  "integration": "3 launcher workflows passed",
+  "seconds": 3.3,
+  "reported_user_failure": "not reproduced; symptom/error and setup.py filename clarification pending",
+  "prior_release_validation": "historical, built before direct-start correction",
+  "console_visibility": {
+    "mode": "hide only dedicated native Windows console; preserve shared consoles",
+    "interpreter_switching": false,
+    "targeted_workflows": 4,
+    "targeted_seconds": 5.03,
+    "full_runner": "C:\\Python313\\python.exe -B scripts/test_integration.py",
+    "full_workflows": 59,
+    "full_seconds": 176.255,
+    "full_status": "passed",
+    "startup_errors": "Full sys.executable path in message and UTF-8 log; sys.version and traceback in log",
+    "limitations": [
+      "A brief console flash before Python executes is possible",
+      "Windows Terminal pseudoconsole visibility not validated",
+      "Native Linux desktop/camera/releases pending",
+      "Historical integration coverage migration gaps remain",
+      "Existing portable releases not rebuilt"
+    ]
+  }
+}

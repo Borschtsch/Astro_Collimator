@@ -13,7 +13,7 @@ independently movable displayed centers and a user-configurable eccentricity lim
 - One integrated collimation tool; no separate simulator website or unrelated UI.
 - No commits, staging, initialization or Git operations.
 - Compact supported camera controls; no camera-value acknowledgement messages.
-- Start maximized with a visible Windows title bar. F11 enables optional fullscreen;
+- Start maximized with a visible desktop title bar on Windows and Linux. F11 enables optional fullscreen;
   Escape/Windowed restores the remembered normal/maximized state.
 
 Setup -> acquire -> Detect -> immediately draw -> add missing circles manually ->
@@ -190,14 +190,15 @@ Options are saved atomically via a flushed temporary file and os.replace.
 Telescope parameters are not sufficient to derive apparent pixel radii without
 camera geometry; current advice does not use them to infer millimeters.
 
-- start.py / source/launcher.py: shared source and packaged entry.
+- start.py / source/bootstrap.py / launcher.py: shared entry running in the associated/caller Python interpreter, with visible startup failures.
 - source/app.py: app shell, camera ownership, display transforms and gestures.
 - source/collimation_review.py: role editing, analysis scheduling and capture import/export.
 - source/feature_detection.py: observation fitting, role proposals and concentric projection.
 - source/edge_tracking.py: bounded manual-reference matching and retention.
 - source/collimation_guidance.py: pure provisional next-action advice from observations.
 - source/app_options.py / setup_dialog.py: validated saved telescope setup.
-- source/camera_properties.py: Windows capability queries and supported control ranges.
+- source/camera_properties.py / linux_camera.py: native DirectShow/V4L2 capability queries and supported control ranges.
+- source/ui_platform.py: decorated maximization, fullscreen state restoration and native wheel events.
 
 Analysis resizes to at most 960 pixels on the longest side and returns raw image
 coordinates. CLAHE, blur, Canny, contours/arcs and radial intensity fitting generate

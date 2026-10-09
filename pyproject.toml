@@ -8,6 +8,11 @@ dynamic = ["version"]
 description = "Offline collimation assistance for Newtonian telescopes"
 readme = "README.md"
 requires-python = ">=3.11"
+classifiers = [
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
 dependencies = [
     "opencv-python>=4.10,<6",
     "Pillow>=10,<13",

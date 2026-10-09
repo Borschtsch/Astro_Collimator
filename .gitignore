@@ -8,3 +8,4 @@ dist/
 *.egg-info/
 options.json
 .options-*.tmp
+startup-error.log

@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-07",
+  "status": "passed",
+  "integration": {
+    "count": 57,
+    "seconds": 178.231,
+    "platform": "Windows",
+    "command": "python -B scripts/test_integration.py"
+  },
+  "startup_checks": [
+    "CLI uses local venv from unrelated working directory",
+    "missing dependencies report error and log",
+    "Explorer start.py selects pythonw and completes app workflow",
+    "Explorer start.cmd selects pythonw and completes app workflow"
+  ],
+  "release_smoke": {
+    "source": {
+      "version": "0.1.0",
+      "status": "passed",
+      "settings_path": "C:\\Astro\\Astro_Collimator-main\\options.json",
+      "python_executable": "C:\\Astro\\Astro_Collimator-main\\.build-venv\\Scripts\\python.exe",
+      "process_id": 56808,
+      "virtual_environment": true,
+      "console_attached": true,
+      "checks": [
+        "decorated maximized startup",
+        "Tk rendering",
+        "setup persistence",
+        "Unicode image import",
+        "optical role detection",
+        "alignment guidance",
+        "matched raw PNG and JSON export"
+      ],
+      "roles": [
+        "Primary reflection",
+        "Focuser edge",
+        "Secondary edge",
+        "Camera pupil"
+      ]
+    },
+    "portable": {
+      "version": "0.1.0",
+      "status": "passed",
+      "settings_path": "C:\\Astro\\Astro_Collimator-main\\dist\\startup-validation\\AstroCollimator\\options.json",
+      "python_executable": "C:\\Astro\\Astro_Collimator-main\\dist\\startup-validation\\AstroCollimator\\AstroCollimator.exe",
+      "process_id": 37872,
+      "virtual_environment": false,
+      "console_attached": false,
+      "checks": [
+        "decorated maximized startup",
+        "Tk rendering",
+        "setup persistence",
+        "Unicode image import",
+        "optical role detection",
+        "alignment guidance",
+        "matched raw PNG and JSON export"
+      ],
+      "roles": [
+        "Primary reflection",
+        "Focuser edge",
+        "Secondary edge",
+        "Camera pupil"
+      ]
+    },
+    "archive": {
+      "version": "0.1.0",
+      "status": "passed",
+      "settings_path": "C:\\Astro\\Astro_Collimator-main\\build\\windows-x64\\Release check \u00e9 895pnjko\\AstroCollimator\\options.json",
+      "python_executable": "C:\\Astro\\Astro_Collimator-main\\build\\windows-x64\\Release check \u00e9 895pnjko\\AstroCollimator\\AstroCollimator.exe",
+      "process_id": 35824,
+      "virtual_environment": false,
+      "console_attached": false,
+      "checks": [
+        "decorated maximized startup",
+        "Tk rendering",
+        "setup persistence",
+        "Unicode image import",
+        "optical role detection",
+        "alignment guidance",
+        "matched raw PNG and JSON export"
+      ],
+      "roles": [
+        "Primary reflection",
+        "Focuser edge",
+        "Secondary edge",
+        "Camera pupil"
+      ]
+    }
+  },
+  "archive": "dist/startup-validation/AstroCollimator-0.1.0-windows-x64.zip",
+  "archive_sha256": "ebf0829c14eae7cd647669ca5714992ebcc72b84b1b7fa8f626e713a2e12ad54",
+  "linux_native_status": "pending graphical VM",
+  "no_file_association_changes": true,
+  "no_runtime_dependency_install": true
+}
