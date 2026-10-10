@@ -28,6 +28,15 @@ Run the explicit integration suite:
 python -B scripts/test_integration.py
 ```
 
+The mobile browser scenario uses Playwright and a Chromium-based browser. Install
+`requirements-test.txt`; set `COLLIMATOR_TEST_BROWSER` to a browser executable if
+needed (installed Edge is detected on Windows). Otherwise install Playwright's
+Chromium browser during test-environment setup. This tooling is excluded from
+application runtime. A missing driver is an explicit coverage skip. Browser
+capture uses Chromium's fake camera hardware; its test context accepts the local
+certificate without changing OS trust. Separate real TLS checks validate the
+certificate chain, IP hostname and fingerprint. Actual mobile trust remains a gap.
+
 Use integration tests only. Preserve the previous behavior and failure-case
 coverage; [the coverage map](INTEGRATION_COVERAGE.md) records remaining migration
 work. Historical component tests are retained but excluded from the runner.
@@ -78,7 +87,7 @@ then verifies launch without build-environment Python paths. The Windows child
 PATH contains only System32; the Linux child retains system binary paths.
 It includes user documentation, build versions and third-party dependency notices. Personal settings, captures, tests and validation images are excluded.
 
-A repeat build stops if `dist/<platform>-<architecture>/AstroCollimator` already exists.
+A repeat build stops if `dist/<platform>-<architecture>/AdvancedAstroCollimator` already exists.
 Use `--output-dir <folder>` for a separate output location. Move the previous
 release aside first; the builder does not delete a folder that might contain
 user settings or captures. Release generation does not publish or upload files.
@@ -180,3 +189,13 @@ a distinct source color patch grows to approximately four times its visible area
 at 2x zoom, while raw pixels and detected radii remain unchanged. It also checks
 the opt-in diagnostic file and paired raw export. This supplements metadata-only
 zoom checks and preserves earlier navigation assertions.
+
+## Windows process environment
+
+Startup, the integration runner, isolated shell-launch fixtures and release
+validation restore missing or unexpanded SystemDrive, SystemRoot, WINDIR,
+ProgramData and ALLUSERSPROFILE in the current process. The Windows directory
+and common application-data directory come from native OS APIs; valid caller
+paths remain unchanged. This prevents native shell caches from treating an
+unexpanded %SystemDrive% path as a folder relative to the project. No registry
+or persistent system-environment settings are changed.

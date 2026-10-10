@@ -13,12 +13,15 @@ import cv2
 import numpy as np
 
 from .app_options import OptionsStore, TelescopeProfile
+from .angle_control import AngleControl
+from .radius_control import RadiusControl
 from .ui_platform import bind_wheel, wheel_direction
 from .feature_detection import (DetectionResult, EdgeCandidate, FEATURE_NAMES,
-                               FEATURE_COLORS, required_features, accepts_reference, SOFT_EDGE_WIDTH, analyze_frame, concentric_guides, circle_from_points)
+                               FEATURE_COLORS, required_features, SOFT_EDGE_WIDTH, analyze_frame, concentric_guides, circle_from_points)
 from .setup_dialog import SetupDialog
 from .edge_tracking import merge_tracking
 from .collimation_guidance import alignment_advice
+from .spider_vanes import VaneDetection, detect_vanes
 from .live_detection import SteadyFrameAverage, can_track_locally, detect_live
 
 
@@ -72,24 +75,22 @@ class ReviewTools:
         self.blink_active = False
         self.fov_crosshair_visible = tk.BooleanVar(value=True)
         self.fov_center_fraction = (0.5, 0.5)
-        view_toolbar = ttk.Frame(self.sidebar)
-        view_toolbar.pack(fill="x", pady=2)
-        self.view_reset_button = ttk.Button(view_toolbar, text="Reset view", command=self.reset_view)
-        self.view_reset_button.pack(side="left", padx=(0, 8))
-        tk.Checkbutton(view_toolbar, text="Show overlays", variable=self.overlays_visible,
-                       command=lambda: self.end_pan()).pack(side="left")
-        self.fullscreen_button = ttk.Button(view_toolbar, text="Fullscreen", width=10,
-                                             command=self.toggle_fullscreen)
-        self.fullscreen_button.pack(side="right")
-        fov_toolbar = ttk.Frame(self.sidebar)
-        fov_toolbar.pack(fill="x")
-        self.fov_checkbox = tk.Checkbutton(fov_toolbar, text="FOV crosshair",
-                                            variable=self.fov_crosshair_visible, command=self.end_pan)
-        self.fov_checkbox.pack(side="left")
-        self.fov_center_button = ttk.Button(fov_toolbar, text="Center FOV", width=10,
-                                              command=self.reset_fov_crosshair)
-        self.fov_center_button.pack(side="left", padx=4)
-        ttk.Label(fov_toolbar, text="Drag its center").pack(side="left")
+        self.crosshair_blades = tk.IntVar(value=4)
+        self.blade_label = tk.StringVar(value="4 blades")
+        self.blades_manual = False
+        self.image_rotation_center = None
+        self.image_rotation_shift = (0.0, 0.0)
+        self.crosshair_angles = {"optical": 0.0, "fov": 0.0}
+        self.crosshair_rotation_offset = 0.0
+        self.angle_text = {name: tk.StringVar(value="0.00") for name in self.crosshair_angles}
+        self.vane_detection = VaneDetection()
+        self.vane_status = tk.StringVar(value="Not aligned")
+        self.vane_generation = 0
+        self.vane_busy = False
+        self.vane_thread = None
+        self.vane_events = Queue()
+        self.crosshair_controls = []
+        self.build_crosshair_controls(self.sidebar)
         self.loading_label = tk.Label(self.sidebar, text="", wraplength=330, justify="left", anchor="w")
         self.loading_label.pack(fill="x", pady=3)
         # Draw our tabs with the portable clam element; retain the native theme
@@ -122,7 +123,7 @@ class ReviewTools:
         for label, callback in (("Open image", self.open_image), ("Live camera", self.resume_live),
                                 ("Save capture", self.save_capture)):
             ttk.Button(actions, text=label, command=callback, width=12).pack(side="left", padx=1)
-        self.detect_button = ttk.Button(self.review_panel, text="Detect edges / restart tracking",
+        self.detect_button = ttk.Button(self.review_panel, text="Detect edges and align image",
                                         command=self.start_detection, state="disabled")
         self.detect_button.pack(fill="x", pady=(4, 2))
         self.track_live = tk.BooleanVar(value=True)
@@ -134,8 +135,8 @@ class ReviewTools:
             "and full primary reflection. Use even illumination, then detect.")
         self.advice_label = tk.Label(self.review_panel, textvariable=self.review_status,
                                      wraplength=330, justify="left", anchor="nw", height=4)
-        self.advice_label.pack(fill="x", pady=2)
-        ttk.Label(self.review_panel, text="Click a circle; add missing ones manually").pack(anchor="w", pady=(2, 2))
+        self.advice_label.pack(fill="x", pady=0)
+        ttk.Label(self.review_panel, text="Click a circle; add missing ones manually").pack(anchor="w", pady=(1, 1))
         self.role_row = ttk.Frame(self.review_panel)
         self.role_row.pack(fill="x")
         self.review_role = tk.StringVar(value=FEATURE_NAMES[0])
@@ -164,17 +165,15 @@ class ReviewTools:
             self.role_buttons[role] = button
         for column in (0, 1, 2):
             self.role_row.columnconfigure(column, weight=1)
-        self.alternatives_open = False
         self.edit_row = ttk.Frame(self.review_panel)
-        self.edit_row.pack(fill="x", pady=2)
-        self.alternative_button = ttk.Button(self.edit_row, text="Change outline", command=self.toggle_alternatives)
-        self.alternative_button.pack(side="left", fill="x", expand=True)
+        self.edit_row.pack(fill="x", pady=0)
         self.shrink_button = ttk.Button(self.edit_row, text="−", width=3,
                                        command=lambda: self.resize_review_circle(-1))
         self.shrink_button.pack(side="left", padx=(3, 0))
         ttk.Label(self.edit_row, text="Radius (px)").pack(side="left", padx=(3, 0))
         self.radius_text = tk.StringVar(value="")
-        self.radius_entry = ttk.Entry(self.edit_row, textvariable=self.radius_text, width=5)
+        self.radius_entry = RadiusControl(self.edit_row, self.radius_text,
+                                          self.prepare_radius_drag, self.resize_radius_drag, self.commit_review_radius)
         self.radius_entry.pack(side="left", padx=2)
         self.radius_entry.bind("<FocusIn>", self.begin_radius_edit)
         self.radius_entry.bind("<FocusOut>", self.leave_radius_edit)
@@ -185,57 +184,207 @@ class ReviewTools:
         self.grow_button.pack(side="left")
         for widget in (self.shrink_button, self.radius_entry, self.grow_button):
             bind_wheel(widget, lambda event: self.resize_review_circle(wheel_direction(event)) if wheel_direction(event) else "break")
-        self.alternative_panel = ttk.Frame(self.review_panel)
-        self.candidate_choice = tk.StringVar(value="Not identified")
-        ttk.Button(self.alternative_panel, text="‹", width=3, command=lambda: self.cycle_candidate(-1)).pack(side="left")
-        ttk.Label(self.alternative_panel, textvariable=self.candidate_choice, anchor="center").pack(side="left", fill="x", expand=True)
-        ttk.Button(self.alternative_panel, text="›", width=3, command=lambda: self.cycle_candidate(1)).pack(side="right")
-        self.candidate_labels = {}
         self.selection_status = tk.StringVar(value="No image analyzed yet.")
         self.selection_label = tk.Label(self.review_panel, textvariable=self.selection_status,
                                         wraplength=330, justify="left", anchor="nw", height=3)
-        self.selection_label.pack(fill="x", pady=2)
+        self.selection_label.pack(fill="x", pady=0)
         self.pick_button = ttk.Button(self.review_panel, text="Pick edge: 3 points on image",
                                       command=self.begin_manual_pick)
-        self.pick_button.pack(fill="x", pady=2)
+        self.pick_button.pack(fill="x", pady=0)
         row = ttk.Frame(self.review_panel)
-        row.pack(fill="x", pady=2)
+        row.pack(fill="x", pady=0)
         ttk.Button(row, text="Clear reference", command=self.clear_reference).pack(side="left", expand=True, fill="x")
         ttk.Button(row, text="Cancel pick", command=self.cancel_pick).pack(side="left", expand=True, fill="x")
         # Raw hypotheses remain internal; normal overlays are one per named role.
         self.show_candidates = tk.BooleanVar(value=False)
         self.review_progress = tk.StringVar(value="0 / 4 required circles present")
-        tk.Label(self.review_panel, textvariable=self.review_progress, anchor="w").pack(fill="x", pady=4)
+        tk.Label(self.review_panel, textvariable=self.review_progress, anchor="w").pack(fill="x", pady=2)
         self.reference_summary = tk.StringVar()
         self.summary_label = tk.Label(self.review_panel, textvariable=self.reference_summary,
                                       wraplength=330, justify="left", anchor="w")
-        self.summary_label.pack(fill="x", pady=2)
+        self.summary_label.pack(fill="x", pady=0)
         self.next_step = tk.StringVar(value="Detect edges; missing circles can be added manually.")
         self.next_step_label = tk.Label(self.review_panel, textvariable=self.next_step,
                                         wraplength=330, justify="left", anchor="w")
-        self.next_step_label.pack(fill="x", pady=2)
+        self.next_step_label.pack(fill="x", pady=0)
         self.measurement_text = tk.StringVar()
         self.measurement_label = tk.Label(self.review_panel, textvariable=self.measurement_text,
                                           wraplength=330, justify="left", anchor="w")
         self.measurement_label.pack(fill="x")
-        tk.Label(self.review_panel, text="Drag circles: move all · Elsewhere: pan\n"
-                 "Wheel: zoom · Ctrl: size · Right: blink",
-                 wraplength=330, justify="left", anchor="w").pack(fill="x", pady=2)
 
-    def close_alternatives(self):
-        self.alternatives_open = False
-        self.alternative_panel.pack_forget()
-        self.alternative_button.config(text="Change outline")
 
-    def toggle_alternatives(self):
-        self.cancel_pick()
-        if self.alternatives_open:
-            self.close_alternatives()
-        else:
-            self.alternatives_open = True
-            self.alternative_panel.pack(after=self.edit_row, fill="x")
-            self.alternative_button.config(text="Done choosing")
-            self.review_status.set("Choose a replacement for this element. Tracking will keep it if no good replacement is found.")
+    def build_crosshair_controls(self, parent):
+        panel = ttk.LabelFrame(parent, padding=(4, 2))
+        panel.pack(fill="x", pady=2)
+        heading = ttk.Frame(panel)
+        self.fov_checkbox = tk.Checkbutton(heading, text="FOV Crosshair",
+            variable=self.fov_crosshair_visible, command=self.crosshair_enabled_changed)
+        self.fov_checkbox.pack(side="left")
+        switch = ttk.Button(heading, textvariable=self.blade_label, width=8, command=self.toggle_blades)
+        switch.pack(side="left", padx=3)
+        panel.configure(labelwidget=heading)
+        actions = ttk.Frame(panel)
+        actions.pack(fill="x")
+        self.fov_center_button = ttk.Button(actions, text="Center", width=7, command=self.reset_fov_crosshair)
+        self.fov_center_button.pack(side="left")
+        align = ttk.Button(actions, text="Auto-align", width=10, command=self.align_crosshairs)
+        align.pack(side="left", padx=3)
+        angles = actions
+        fov_entry, fov_buttons = self.build_rotation_adjuster(angles, "fov", "Rotation")
+        view_toolbar = ttk.Frame(parent)
+        view_toolbar.pack(before=panel, fill="x", pady=2)
+        self.view_reset_button = ttk.Button(view_toolbar, text="Reset view", command=self.reset_view)
+        self.view_reset_button.pack(side="left", padx=(0, 8))
+        tk.Checkbutton(view_toolbar, text="Show overlays", variable=self.overlays_visible,
+                       command=self.end_pan).pack(side="left")
+        image_angles = view_toolbar
+        image_entry, image_buttons = self.build_rotation_adjuster(image_angles, "optical", "Image rotation")
+        controls = {"panel": panel, "entries": {"fov": fov_entry, "optical": image_entry},
+                    "checkboxes": {"fov": self.fov_checkbox}, "center": self.fov_center_button,
+                    "switch": switch, "align": align,
+                    "buttons": {"fov": fov_buttons, "optical": image_buttons}}
+        self.crosshair_controls.extend((controls, controls))
+        self.last_crosshair_enabled = self.fov_crosshair_visible.get()
+        self.update_crosshair_controls()
+
+    def build_rotation_adjuster(self, parent, name, label):
+        minus = ttk.Button(parent, text="−", width=2, command=lambda: self.nudge_rotation(name, -.01))
+        minus.pack(side="left", padx=(3, 0))
+        ttk.Label(parent, text=label).pack(side="left", padx=(3, 2))
+        entry = AngleControl(parent, self.angle_text[name], lambda: self.set_crosshair_angle(name))
+        entry.pack(side="left", padx=1)
+        ttk.Label(parent, text="°").pack(side="left", padx=(0, 2))
+        plus = ttk.Button(parent, text="+", width=2, command=lambda: self.nudge_rotation(name, .01))
+        plus.pack(side="left")
+        return entry, (minus, plus)
+
+    def nudge_rotation(self, name, delta):
+        try:
+            value = float(self.angle_text[name].get())
+            if not np.isfinite(value):
+                raise ValueError
+        except ValueError:
+            value = self.crosshair_angles[name]
+        self.angle_text[name].set(f"{value + delta:.2f}")
+        return self.set_crosshair_angle(name)
+
+    def crosshair_enabled_changed(self):
+        self.end_pan()
+        self.update_crosshair_controls()
+
+    def update_crosshair_controls(self):
+        enabled = self.fov_crosshair_visible.get()
+        if self.last_crosshair_enabled and not enabled:
+            self.vane_generation += 1  # A pending alignment cannot change a disabled reference.
+            self.end_pan()
+        self.last_crosshair_enabled = enabled
+        controls = self.crosshair_controls[0]
+        controls["entries"]["fov"].state(["!disabled"] if enabled else ["disabled"])
+        for button in controls["buttons"]["fov"]:
+            button.state(["!disabled"] if enabled else ["disabled"])
+        if not enabled:
+            controls["entries"]["fov"].anchor = None
+        controls["switch"].state(["!disabled"] if enabled else ["disabled"])
+        controls["center"].state(["!disabled"] if enabled and self.last_frame is not None else ["disabled"])
+        controls["align"].state(["!disabled"] if enabled and self.last_frame is not None and not self.vane_busy else ["disabled"])
+        controls["align"].configure(text="Aligning…" if self.vane_busy else "Auto-align")
+
+    def set_crosshair_angle(self, name):
+        try:
+            value = float(self.angle_text[name].get())
+            if not np.isfinite(value):
+                raise ValueError
+        except ValueError:
+            self.angle_text[name].set(f"{self.crosshair_angles[name]:.2f}")
+            return "break"
+        self.vane_generation += 1
+        self.end_pan()
+        value = round(value, 2) % 360
+        if name == "optical":
+            self.apply_image_rotation(value)
+        self.crosshair_angles[name] = value
+        self.angle_text[name].set(f"{value:.2f}")
+        return "break"
+
+    def set_blades(self, blades):
+        self.crosshair_blades.set(blades)
+        self.blade_label.set(f"{blades} blades")
+
+    def toggle_blades(self):
+        self.vane_generation += 1
+        self.blades_manual = True
+        self.set_blades(3 if self.crosshair_blades.get() == 4 else 4)
+
+    def accept_vanes(self, result, align=False):
+        self.vane_detection = result
+        if align:
+            self.vane_status.set("" if result.angle_deg is not None else "Not aligned")
+        elif not self.vane_busy:
+            self.vane_status.set("Ready to align" if result.angle_deg is not None else "Needs clearer image")
+        if align or not self.blades_manual:
+            self.set_blades(result.blades)
+        if align:
+            self.blades_manual = False
+            if result.angle_deg is not None:
+                step = 120 if result.blades == 3 else 90
+                current = self.current_view_transform()
+                def displayed_direction(raw_angle):
+                    radians = np.deg2rad(raw_angle)
+                    return current.to_display_vector((np.cos(radians), np.sin(radians)))
+                target = displayed_direction(self.crosshair_render_angle())
+                target_angle = np.rad2deg(np.arctan2(target[1], target[0]))
+                corrections = []
+                for index in range(360 // step):
+                    measured = displayed_direction(result.angle_deg + index * step)
+                    heading = np.rad2deg(np.arctan2(measured[1], measured[0]))
+                    corrections.append((target_angle - heading + 180) % 360 - 180)
+                delta = min(corrections, key=abs)
+                old_angle = self.crosshair_angles["optical"]
+                angle = round(old_angle + delta, 2) % 360
+                self.apply_image_rotation(angle)
+                raw_direction = replace(current, rotation_deg=angle).to_original_vector(target)
+                raw_angle = np.rad2deg(np.arctan2(raw_direction[1], raw_direction[0]))
+                self.crosshair_rotation_offset = (raw_angle - self.crosshair_angles["fov"]) % 360
+                self.crosshair_angles["optical"] = angle
+                self.angle_text["optical"].set(f"{angle:.2f}")
+            if result.angle_deg is None:
+                self.review_status.set(result.message)
+
+    def align_crosshairs(self):
+        if self.last_frame is None or self.vane_busy:
+            return
+        self.vane_generation += 1
+        token = (self.session, self.vane_generation)
+        frame = self.last_frame.copy()
+        result = replace(self.detection, suggested=dict(self.selections)) if self.detection else None
+        events = self.vane_events
+        self.vane_busy = True
+        self.vane_status.set("Aligning…")
+        def measure():
+            try:
+                reference = result if result is not None else analyze_frame(frame)
+                events.put((*token, detect_vanes(frame, reference), None))
+            except Exception as error:
+                events.put((*token, None, str(error)))
+        self.vane_thread = Thread(target=measure, daemon=True, name="Spider-vane-alignment")
+        self.vane_thread.start()
+
+    def poll_vanes(self):
+        while True:
+            try:
+                session, generation, result, error = self.vane_events.get_nowait()
+            except Empty:
+                break
+            self.vane_busy = False
+            if (session, generation) != (self.session, self.vane_generation):
+                self.vane_status.set("Not aligned")
+                continue
+            if error:
+                self.vane_status.set("Alignment failed")
+                self.review_status.set(f"Vane alignment failed: {error}. Set rotation manually.")
+            else:
+                self.accept_vanes(result, align=True)
+        self.update_crosshair_controls()
 
     def refresh_guidance(self):
         states = {role: "missing" if role not in self.selections else
@@ -246,7 +395,7 @@ class ReviewTools:
         self.reference_summary.set(f"Focuser: {states['Focuser edge']} · Secondary: {states['Secondary edge']}\n"
                                    f"Primary: {states['Primary reflection']} · Pupil: {states['Camera pupil']} · Mark: {states['Center mark']}")
         self.alignment = alignment_advice(self.detection, self.selections, self.profile)
-        paused = self.source_mode == "camera" and self.camera_on and not self.tracking_active and self.detection is not None
+        paused = self.live_source_active and not self.tracking_active and self.detection is not None
         self.next_step.set("Tracking off: live image continues; circles hold the last measurements. Enable tracking or Detect to update."
                            if paused else self.alignment.instruction)
         center = self.detection.guide_center if self.detection else None
@@ -259,9 +408,9 @@ class ReviewTools:
             self.analysis_generation += 1
             self.tracking_active = False
             self.tracking_pending_frame = None
-            self.view_frozen = (self.source_mode == "image" or self.picking_role is not None
+            self.view_frozen = (not self.live_source_active or self.picking_role is not None
                                 or self.radius_editing or self.pan_anchor is not None)
-        elif self.source_mode == "camera" and self.camera_on and self.last_frame is not None:
+        elif self.live_source_active and self.last_frame is not None:
             self.tracking_active = True
             self.view_frozen = self.picking_role is not None or self.radius_editing
             self.tracking_pending_frame = self.last_frame.copy()
@@ -299,8 +448,12 @@ class ReviewTools:
     def invalidate_review(self):
         self.finish_radius_edit()
         self.end_pan()
-        self.close_alternatives()
         self.analysis_generation += 1
+        self.vane_generation += 1
+        self.vane_detection = VaneDetection()
+        self.vane_status.set("Not aligned")
+        self.blades_manual = False
+        self.set_blades(4)
         self.detection = None
         self.observations_current = False
         self.selections = {}
@@ -334,7 +487,6 @@ class ReviewTools:
         if self.last_frame is None or self.analysis_busy or self.closing:
             return
         self.end_pan()
-        self.close_alternatives()
         self.review_role.set(FEATURE_NAMES[0])
         self.overlays_visible.set(True)
         self.freeze_for_review()
@@ -350,9 +502,10 @@ class ReviewTools:
         self.manual_references = {}
         self.guide_offset = (0, 0)
         self.tracking_held = ()
-        self.tracking_active = self.source_mode == "camera" and self.camera_on and self.track_live.get()
+        self.tracking_active = self.live_source_active and self.track_live.get()
         self.view_frozen = not self.tracking_active
         self.analysis_generation += 1
+        self.vane_generation += 1  # Explicit detection supersedes pending alignment.
         self.review_status.set("Detecting edges locally…")
         self._submit_analysis(self.last_frame.copy(), tracking=False)
 
@@ -360,6 +513,7 @@ class ReviewTools:
         if self.analysis_busy:
             return
         token = (self.session, self.analysis_generation)
+        alignment_generation = self.vane_generation
         frame, shape = frame.copy(), self.profile.center_mark_shape
         frames = self.live_average.snapshot(monotonic()) if tracking else ()
         frames = frames or (frame,)
@@ -375,7 +529,11 @@ class ReviewTools:
         def analyze():
             try:
                 packet = detect_live(frames, previous, selections, shape, full_detector, force_full)
-                analysis_events.put((*token, packet.result, None, packet.frame, tracking, packet.mode, packet.averaged_frames))
+                try:
+                    vanes = detect_vanes(packet.frame, packet.result)
+                except Exception:
+                    vanes = VaneDetection(message="Vane detection unavailable. Use manual rotation.")
+                analysis_events.put((*token, packet.result, None, packet.frame, tracking, packet.mode, packet.averaged_frames, vanes, alignment_generation))
             except Exception as error:
                 analysis_events.put((*token, None, str(error), frame, tracking, "full", 1))
 
@@ -385,7 +543,8 @@ class ReviewTools:
     def poll_analysis(self):
         while True:
             try:
-                session, generation, result, error, frame, tracking, mode, count = self.analysis_events.get_nowait()
+                record = self.analysis_events.get_nowait()
+                session, generation, result, error, frame, tracking, mode, count = record[:8]
             except Empty:
                 break
             self.analysis_busy = False
@@ -408,11 +567,15 @@ class ReviewTools:
                 self.selections = dict(result.suggested)
             self.last_frame = frame  # Live tracking pairs measurements and visible frames.
             self.observations_current = True
-            if self.source_mode == "camera" and self.camera_on and not self.radius_editing and self.picking_role is None and self.pan_anchor is None:
+            if self.live_source_active and not self.radius_editing and self.picking_role is None and self.pan_anchor is None:
                 self.view_frozen = False
             self.confirmed.clear()
             self.review_status.set(self.capture_advice(self.detection))
             self.refresh_review_selection()
+            if len(record) > 8:
+                align = (not tracking and len(record) > 9 and record[9] == self.vane_generation
+                         and record[8].angle_deg is not None)
+                self.accept_vanes(record[8], align=align)
 
     @staticmethod
     def capture_advice(result):
@@ -433,19 +596,7 @@ class ReviewTools:
         role = self.review_role.get()
         for name, button in self.role_buttons.items():
             button.state(["pressed"] if name == role else ["!pressed"])
-        self.candidate_labels = {"Not identified": None}
-        if self.detection is not None:
-            for candidate in self.detection.candidates:
-                primary = self.detection.candidate(self.selections.get("Primary reflection"))
-                if not accepts_reference(role, candidate, primary):
-                    continue
-                detail = f"radius {candidate.radius:.0f} px"
-                partial = " · partial" if candidate.clipped or candidate.coverage is not None and candidate.coverage < 0.85 else ""
-                label = f"Outline {candidate.id} · {detail}{partial}"
-                self.candidate_labels[label] = candidate.id
         selected = self.selections.get(role)
-        self.candidate_choice.set(next((label for label, candidate_id in self.candidate_labels.items()
-                                       if candidate_id == selected), "Not identified"))
         candidate = self.detection.candidate(selected) if self.detection else None
         hints = {"Focuser edge": "Orange: inside focuser rim.",
                  "Secondary edge": "Cyan: actual secondary face, not its dark reflection.",
@@ -462,60 +613,23 @@ class ReviewTools:
             action = "Click/drag to edit; missing circles can be added manually."
             self.selection_status.set(hints[role] + " " + action)
         else:
-            self.selection_status.set(hints[role] + " Not identified; pick it or change outline.")
+            action = "Pick center" if role == "Center mark" else "Pick edge"
+            self.selection_status.set(hints[role] + f" Not identified; add it with {action}.")
         self.pick_button.config(text="Pick center: 1 point on image" if role == "Center mark"
                                 else "Pick edge: 3 points on image")
         required = required_features(self.profile.center_mark_shape)
         count = sum(role in self.selections and self.detection.candidate(self.selections[role]) is not None
                     for role in required) if self.detection else 0
-        self.review_progress.set(f"{count} / {len(required)} required circles present" + (" · tracking" if self.tracking_active else " · tracking off" if self.source_mode == "camera" and self.camera_on else ""))
+        self.review_progress.set(f"{count} / {len(required)} required circles present" + (" · tracking" if self.tracking_active else " · tracking off" if self.live_source_active else ""))
         self.refresh_guidance()
 
     def select_review_role(self, role):
         self.review_role.set(role)
         self.review_role_changed()
 
-    def cycle_candidate(self, direction):
-        labels = [label for label, candidate_id in self.candidate_labels.items() if candidate_id is not None]
-        if not labels:
-            return
-        current = self.candidate_choice.get()
-        index = labels.index(current) if current in labels else (-1 if direction > 0 else 0)
-        self.candidate_choice.set(labels[(index + direction) % len(labels)])
-        self.choose_candidate()
-
     def review_role_changed(self, event=None):
         self.finish_radius_edit(restore=True)
-        self.close_alternatives()
         self.cancel_pick()
-        self.refresh_review_selection()
-
-    def choose_candidate(self):
-        self.cancel_pick()
-        self.analysis_generation += 1
-        role = self.review_role.get()
-        candidate_id = self.candidate_labels.get(self.candidate_choice.get())
-        self.confirmed.discard(role)
-        if candidate_id is None:
-            self.selections.pop(role, None)
-            self.manual_references.pop(role, None)
-        else:
-            # One geometric candidate cannot be two different optical references.
-            for other in tuple(self.selections):
-                if other != role and self.selections[other] == candidate_id:
-                    self.selections.pop(other)
-                    self.manual_references.pop(other, None)
-                    self.confirmed.discard(other)
-            self.selections[role] = candidate_id
-            reference = next((edge for edge in self.detection.observations if edge.id == candidate_id),
-                             self.detection.candidate(candidate_id))
-            if role == "Camera pupil" and not reference.kind.startswith("pupil_"):
-                reference = replace(reference, kind="pupil_manual")
-                self.detection = replace(self.detection,
-                    candidates=tuple(replace(edge, kind="pupil_manual") if edge.id == candidate_id else edge for edge in self.detection.candidates),
-                    observations=tuple(reference if edge.id == candidate_id else edge for edge in self.detection.observations))
-            self.manual_references[role] = reference
-        self.reanchor_review_guides()
         self.refresh_review_selection()
 
     def reanchor_review_guides(self):
@@ -532,6 +646,28 @@ class ReviewTools:
                 tuple(anchor.center[i] + self.guide_offset[i] for i in (0, 1)))
             self.detection = replace(self.detection, guide_master_id=anchor.id)
 
+    def prepare_radius_drag(self):
+        self.begin_radius_edit()
+        edge = self.detection.candidate(self.selections.get(self.review_role.get())) if self.detection else None
+        if edge is None:
+            return None
+        try:
+            value = int(self.radius_text.get().strip())
+            minimum = 1 if self.review_role.get() == "Center mark" else 2
+            if not minimum <= value <= max(self.detection.image_size) * 2:
+                raise ValueError
+        except ValueError:
+            self.review_status.set("Radius (px): enter a valid whole-pixel value before dragging.")
+            return None
+        return value
+
+    def resize_radius_drag(self, radius):
+        edge = self.detection.candidate(self.selections.get(self.review_role.get())) if self.detection else None
+        if edge is None or not self.radius_editing:
+            return None
+        self.resize_review_circle(radius - round(edge.radius))
+        return round(self.detection.candidate(edge.id).radius)
+
     def begin_radius_edit(self, event=None):
         if self.detection is None or self.radius_editing:
             return
@@ -542,6 +678,9 @@ class ReviewTools:
         self.analysis_generation += 1
 
     def finish_radius_edit(self, restore=False):
+        if hasattr(self, "radius_entry"):
+            self.radius_entry.anchor = None
+            self.radius_entry.dragged = False
         if self.radius_editing:
             self.radius_editing = False
             self.view_frozen = self.radius_edit_was_frozen or self.picking_role is not None
@@ -655,7 +794,7 @@ class ReviewTools:
     def cancel_pick(self):
         self.picking_role = None
         self.pick_points = []
-        if self.source_mode == "camera" and self.camera_on and not self.radius_editing:
+        if self.live_source_active and not self.radius_editing:
             self.view_frozen = False
 
     def begin_manual_pick(self):
@@ -727,6 +866,7 @@ class ReviewTools:
         frame = cv2.imdecode(np.frombuffer(Path(path).read_bytes(), dtype=np.uint8), cv2.IMREAD_COLOR)
         if frame is None or min(frame.shape[:2]) < 32:
             raise ValueError("Choose a readable image at least 32 pixels wide and high.")
+        self.stop_phone()
         self.session += 1
         self.worker.commands.put((self.session, "close", None))
         self.enable_camera_controls(False)
@@ -740,12 +880,12 @@ class ReviewTools:
         self.display_transform = None
         self.reset_crosshair()
         self.refresh_button.config(state="normal")
-        self.camera_dropdown.config(state="readonly" if self.camera_list else "disabled")
+        self.camera_dropdown.config(state="readonly")
         self.loading_label.config(text=f"Image: {Path(path).name}")
 
     def resume_live(self):
         self.source_description = "Live camera"
-        if self.selected_camera.get() in self.camera_list:
+        if self.selected_camera.get() in self.camera_dropdown.cget("values"):
             self.on_camera_selected(None)
         else:
             self.refresh_cameras()
@@ -777,16 +917,26 @@ class ReviewTools:
                     "detection": self.detection.to_dict() if self.detection else None,
                     "observations_match_image": self.observations_current,
                     "analysis": {"mode": self.analysis_mode, "averaged_frames": self.averaged_frames},
+                    "spider_vanes": self.vane_detection.to_dict(),
+                    "image_rotation_deg": self.crosshair_angles["optical"],
+                    "image_rotation_center_px": self.image_rotation_center,
+                    "image_rotation_shift_px": self.image_rotation_shift,
                     "fov_crosshair": {"visible": self.fov_crosshair_visible.get(),
-                                     "center_fraction": list(self.fov_center_fraction),
+                                     "angle_deg": self.crosshair_angles["fov"],
+                                     "rotation_compensation_deg": self.crosshair_rotation_offset,
+                                     "render_angle_deg": self.crosshair_render_angle(),
+                                     "blades": self.crosshair_blades.get(),
+                                     "center_fraction": [v / size for v, size in zip(self.fov_crosshair_center(),
+                                                          (self.last_frame.shape[1], self.last_frame.shape[0]))],
                                      "center_px": list(self.fov_crosshair_center())},
                     "selections": self.selections,
                     "manual_points": self.manual_points,
                     "manual_adjustments": self.manual_adjustments,
                     "manual_references": {role: asdict(edge) for role, edge in self.manual_references.items()},
                     "tracking": {"active": self.tracking_active, "held_manual": list(self.tracking_held), "center_offset": list(self.guide_offset)},
-                    "alignment_advice": self.alignment.to_dict() if self.alignment and (self.source_mode != "camera" or self.observations_current) else None,
+                    "alignment_advice": self.alignment.to_dict() if self.alignment and (self.source_mode not in ("camera", "phone") or self.observations_current) else None,
                     "interpretation": "Concentric circular guides are a best guess, not independent alignment measurements. Original observations drive provisional next-action advice; primary axial alignment is not certified."}
+        metadata["crosshair"] = metadata["fov_crosshair"]  # Legacy export key aliases the sole reference.
         # Encode metadata before writing either file; preserve original-resolution pixels.
         payload = json.dumps(metadata, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
         path.write_bytes(encoded.tobytes())

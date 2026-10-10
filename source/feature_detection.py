@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, replace
 import math
 from time import perf_counter
 
+from .spider_vanes import draw_crosshair
+
 import cv2
 import numpy as np
 
@@ -532,7 +534,7 @@ def _suggest_roles(boundaries, marks, gray):
     if plausible_marks:
         suggested["Center mark"] = min(plausible_marks,
                                        key=lambda edge: np.linalg.norm(np.subtract(edge.center, primary.center))).id
-    return suggested, ("Named outlines are automatic best guesses. Blink-check them; replace an incorrect outline or add a missing edge.",)
+    return suggested, ("Named outlines are automatic best guesses. Blink-check them; adjust their size or shared center, or add a missing edge.",)
 
 
 def _suggest_camera_pupil(boundaries, details, gray, suggested):
@@ -818,9 +820,12 @@ class DisplayTransform:
     crop_height: int
     width: int
     height: int
+    rotation_deg: float = 0.0
+    rotation_center: tuple[float, float] | None = None
+    rotation_shift: tuple[float, float] = (0.0, 0.0)
 
     @classmethod
-    def for_image(cls, image_size, zoom, max_width=960, max_height=720, center=None):
+    def for_image(cls, image_size, zoom, max_width=960, max_height=720, center=None, rotation_deg=0, rotation_center=None, rotation_shift=(0.0, 0.0)):
         width, height = image_size
         crop_width, crop_height = max(1, int(width / zoom)), max(1, int(height / zoom))
         scale = min(max_width / crop_width, max_height / crop_height)
@@ -830,18 +835,67 @@ class DisplayTransform:
             crop_y = max(0, min(height - crop_height, round(center[1] - crop_height / 2)))
         return cls(crop_x, crop_y,
                    crop_width, crop_height, max(1, round(crop_width * scale)),
-                   max(1, round(crop_height * scale)))
+                   max(1, round(crop_height * scale)), rotation_deg, rotation_center, rotation_shift)
+
+    @property
+    def display_scale(self):
+        return self.width / self.crop_width
+
+    @property
+    def pivot(self):
+        return self.rotation_center or (self.crop_x + self.crop_width / 2,
+                                        self.crop_y + self.crop_height / 2)
+
+    @property
+    def display_pivot(self):
+        return ((self.pivot[0] - self.crop_x + self.rotation_shift[0]) * self.width / self.crop_width,
+                (self.pivot[1] - self.crop_y + self.rotation_shift[1]) * self.height / self.crop_height)
+
+    def to_display_vector(self, vector):
+        x = vector[0] * self.width / self.crop_width
+        y = vector[1] * self.height / self.crop_height
+        angle = math.radians(self.rotation_deg)
+        c, s = math.cos(angle), math.sin(angle)
+        return (c * x - s * y, s * x + c * y)
+
+    def to_original_vector(self, vector):
+        angle = math.radians(self.rotation_deg)
+        c, s = math.cos(angle), math.sin(angle)
+        return ((c * vector[0] + s * vector[1]) * self.crop_width / self.width,
+                (-s * vector[0] + c * vector[1]) * self.crop_height / self.height)
+
+    def viewport_delta(self, vector):
+        # Moving the viewport translates in screen axes; overlay edits use the inverse rotation.
+        return (vector[0] * self.crop_width / self.width,
+                vector[1] * self.crop_height / self.height)
 
     def to_display(self, point):
-        return ((point[0] - self.crop_x) * self.width / self.crop_width,
-                (point[1] - self.crop_y) * self.height / self.crop_height)
+        vector = self.to_display_vector((point[0] - self.pivot[0], point[1] - self.pivot[1]))
+        return (self.display_pivot[0] + vector[0], self.display_pivot[1] + vector[1])
 
     def to_original(self, point):
-        return (point[0] * self.crop_width / self.width + self.crop_x,
-                point[1] * self.crop_height / self.height + self.crop_y)
+        vector = self.to_original_vector((point[0] - self.display_pivot[0],
+                                         point[1] - self.display_pivot[1]))
+        return (self.pivot[0] + vector[0], self.pivot[1] + vector[1])
+
+    def rotation_matrix(self):
+        # OpenCV uses counterclockwise degrees; UI/image coordinates use clockwise.
+        base = ((self.pivot[0] - self.crop_x) * self.width / self.crop_width,
+                (self.pivot[1] - self.crop_y) * self.height / self.crop_height)
+        matrix = cv2.getRotationMatrix2D(base, -self.rotation_deg, 1.0)
+        matrix[:, 2] += (self.rotation_shift[0] * self.width / self.crop_width,
+                         self.rotation_shift[1] * self.height / self.crop_height)
+        return matrix
+
+    def image_matrix(self):
+        # Read the full source image, including pixels outside the unrotated crop.
+        origin = self.to_display((0, 0))
+        x, y = self.to_display_vector((1, 0)), self.to_display_vector((0, 1))
+        return np.array(((x[0], y[0], origin[0]), (x[1], y[1], origin[1])), dtype=float)
 
 
-def draw_detection(frame_rgb, result, selections, confirmed, transform, show_candidates=True, selected_id=None):
+def draw_detection(frame_rgb, result, selections, confirmed, transform, show_candidates=True, selected_id=None,
+                   crosshair_visible=True, crosshair_angle_deg=0, crosshair_blades=4):
     """Draw measured edges separately from shared-center manual references."""
     centers = []
     label_boxes = []
@@ -912,9 +966,8 @@ def draw_detection(frame_rgb, result, selections, confirmed, transform, show_can
         cv2.putText(frame_rgb, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
     if result.guide_center is not None and centers:
         centers = [(centers[0][0], (255, 255, 255))]
-    center_thickness = 2 if result.guide_center is not None else 1
-    for center, color in centers:
-        cv2.drawMarker(frame_rgb, center, (0, 0, 0), cv2.MARKER_CROSS, 11, center_thickness + 1)
-    for center, color in centers:
-        cv2.drawMarker(frame_rgb, center, color, cv2.MARKER_CROSS, 11, center_thickness)
-        cv2.circle(frame_rgb, center, 1, color, -1)
+    if crosshair_visible:
+        center_thickness = 2 if result.guide_center is not None else 1
+        for center, color in centers:
+            draw_crosshair(frame_rgb, center, crosshair_angle_deg, crosshair_blades,
+                           color=color, thickness=center_thickness, transform=transform)

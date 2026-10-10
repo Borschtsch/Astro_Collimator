@@ -9,3 +9,4 @@ dist/
 options.json
 .options-*.tmp
 startup-error.log
+phone-link/

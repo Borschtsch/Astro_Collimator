@@ -18,6 +18,8 @@ from .images import pupil_fixture
 class LinuxCameraHardware:
     def __init__(self, permission_denied=False):
         self.permission_denied = permission_denied
+        self.names = {2: "Astro Camera", 14: "Astro Camera"}
+        self.name_reads = []
         self.captures = []
         self.queries = []
         self.closed = []
@@ -25,6 +27,7 @@ class LinuxCameraHardware:
     def __enter__(self):
         self.stack = ExitStack()
         original_open, original_close, original_glob = os.open, os.close, Path.glob
+        original_read_text = Path.read_text
 
         def open_device(path, flags, *args, **kwargs):
             if str(path).startswith("/dev/video"):
@@ -43,6 +46,15 @@ class LinuxCameraHardware:
             if path == Path("/dev") and pattern == "video*":
                 return iter([Path("/dev/video14"), Path("/dev/video2"), Path("/dev/video-bad")])
             return original_glob(path, pattern, *args, **kwargs)
+
+        def read_device_name(path, *args, **kwargs):
+            if str(path).replace("\\", "/").startswith("/sys/class/video4linux/"):
+                self.name_reads.append((str(path), threading.get_ident()))
+                index = int(path.parent.name[5:])
+                if index not in self.names:
+                    raise PermissionError(errno.EACCES, "Camera name unavailable")
+                return self.names[index] + "\n"
+            return original_read_text(path, *args, **kwargs)
 
         def ioctl(descriptor, request, buffer, mutate):
             assert request == QUERY_CONTROL and mutate
@@ -71,6 +83,7 @@ class LinuxCameraHardware:
                         patch("os.open", side_effect=open_device),
                         patch("os.close", side_effect=close_device),
                         patch.object(Path, "glob", glob_devices),
+                        patch.object(Path, "read_text", read_device_name),
                         patch("cv2.VideoCapture", side_effect=capture)):
             self.stack.enter_context(context)
         return self

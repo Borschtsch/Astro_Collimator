@@ -1,6 +1,6 @@
 # Getting started
 
-Astro Collimator helps you collimate a Newtonian telescope from a view through
+Advanced Astro Collimator helps you collimate a Newtonian telescope from a view through
 the focuser. It runs locally on Windows and Linux, without an internet connection.
 
 ## Portable applications
@@ -8,9 +8,9 @@ the focuser. It runs locally on Windows and Linux, without an internet connectio
 Extract the entire release archive to a writable folder. Keep `_internal` beside
 the executable. Python is included; no Python installation is required.
 
-- **Windows:** extract the Windows ZIP and open **AstroCollimator.exe**.
+- **Windows:** extract the Windows ZIP and open **AdvancedAstroCollimator.exe**.
 - **Linux:** extract the Linux `.tar.gz` for your architecture, then run
-  `./AstroCollimator` inside the extracted folder from your desktop session.
+  `./AdvancedAstroCollimator` inside the extracted folder from your desktop session.
   A Linux desktop with X11 or XWayland is required. Linux system libraries still
   need to be installed; see below. Builds are specific to their Linux baseline
   and architecture, recorded in `build-info.json`.
@@ -46,7 +46,11 @@ with your terminal stays visible. Windows may briefly show its console before
 Python reaches the launcher.
 Startup failures display the interpreter location and log path. The UTF-8 log
 includes the interpreter location, Python version and traceback.
-Dependencies are never installed automatically.
+Before opening the app, startup checks every required runtime package and exercises
+image codecs, QR generation, local HTTPS certificate creation and Tk image display.
+A missing or broken dependency stops startup with all detected failures listed.
+The error identifies the Python interpreter that needs repair. Version/help commands
+remain available without opening the GUI. Dependencies are never installed automatically.
 
 ### Linux
 
@@ -64,7 +68,7 @@ Other distributions use equivalent Python/Tk, OpenGL and GLib packages. Use a
 normal desktop session; Tk uses XWayland on Wayland desktops. The portable Linux
 application also requires the system graphics libraries and a desktop display.
 If the executable loses its permissions while being copied, restore them with
-`chmod +x AstroCollimator`. Extract the original tar archive to preserve its
+`chmod +x AdvancedAstroCollimator`. Extract the original tar archive to preserve its
 permissions and internal symbolic links.
 
 `start.py` is the single source entry point and works from another working
@@ -72,8 +76,10 @@ directory. Source installations save setup in the project-root `options.json`;
 portable applications save it beside the executable. Use a writable user folder.
 
 Dependency installation requires internet access or pre-downloaded packages.
-The installed application makes no runtime network requests and uses no cloud
-service or downloaded detection model.
+The installed application uses no cloud service or downloaded detection model.
+The optional phone camera runs a local web server only while that source is
+selected. See [Phone camera](PHONE_CAPTURE.md) for certificate-free image uploads
+and browser photo/video capture over local HTTPS.
 
 ## Camera connection
 

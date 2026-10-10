@@ -46,6 +46,7 @@ class GUID(ct.Structure):
 SYSTEM_DEVICE_ENUM = GUID.parse("62BE5D10-60EB-11D0-BD3B-00A0C911CE86")
 CREATE_DEVICE_ENUM = GUID.parse("29840822-5B84-11D0-BD3B-00A0C911CE86")
 VIDEO_INPUT_CATEGORY = GUID.parse("860BB310-5D01-11D0-BD3B-00A0C911CE86")
+PROPERTY_BAG = GUID.parse("55272A00-42CB-11CE-8135-00AA004BB851")
 BASE_FILTER = GUID.parse("56A86895-0AD4-11CE-B03A-0020AF0BA770")
 CAMERA_CONTROL = GUID.parse("C6E13370-30AC-11D0-A18C-00A0C9118956")
 VIDEO_PROC_AMP = GUID.parse("C6E13360-30AC-11D0-A18C-00A0C9118956")
@@ -185,3 +186,77 @@ def query_camera_properties(camera_index):
             return results
     except OSError:
         return {}
+
+
+class _VariantData(ct.Union):
+    _fields_ = [("bstr", VOID), ("record", VOID * 2), ("number", ct.c_double)]
+
+
+class _Variant(ct.Structure):
+    _anonymous_ = ("data",)
+    _fields_ = [("vt", ct.c_uint16), ("reserved", ct.c_uint16 * 3),
+                ("data", _VariantData)]
+
+
+def _friendly_name(moniker, automation):
+    bag, value = VOID(), _Variant()
+    try:
+        # IMoniker::BindToStorage, then IPropertyBag::Read (no device opened).
+        _check(_invoke(moniker, 9, HRESULT, (VOID, VOID, GUID_PTR, VOID_PTR),
+                       None, None, ct.byref(PROPERTY_BAG), ct.byref(bag)))
+        result = _invoke(bag, 3, HRESULT, (ct.c_wchar_p, ct.POINTER(_Variant), VOID),
+                         "FriendlyName", ct.byref(value), None)
+        if result >= 0 and value.vt == 8 and value.bstr:  # VT_BSTR
+            return ct.wstring_at(value.bstr, automation.SysStringLen(value.bstr))
+        return ""
+    except OSError:
+        return ""
+    finally:
+        automation.VariantClear(ct.byref(value))
+        _release(bag)
+
+
+def query_camera_names(indices):
+    """Read names in the exact native capture ordering; unavailable names stay blank."""
+    if sys.platform.startswith("linux"):
+        from .linux_camera import query_camera_names as query_linux_names
+        return query_linux_names(indices)
+    if sys.platform != "win32" or not indices:
+        return {}
+    names = {}
+    device_enum, moniker_enum, moniker = VOID(), VOID(), VOID()
+    try:
+        automation = ct.WinDLL("oleaut32")
+        automation.VariantClear.argtypes = (ct.POINTER(_Variant),)
+        automation.VariantClear.restype = HRESULT
+        automation.SysStringLen.argtypes = (VOID,)
+        automation.SysStringLen.restype = ct.c_uint32
+        with _com_apartment() as ole:
+            try:
+                _check(ole.CoCreateInstance(ct.byref(SYSTEM_DEVICE_ENUM), None, 1,
+                                           ct.byref(CREATE_DEVICE_ENUM), ct.byref(device_enum)))
+                result = _invoke(device_enum, 3, HRESULT, (GUID_PTR, VOID_PTR, ULONG),
+                                 ct.byref(VIDEO_INPUT_CATEGORY), ct.byref(moniker_enum), 0)
+                _check(result)
+                if result != 0 or not moniker_enum:
+                    return names
+                wanted = set(indices)
+                for index in range(max(wanted) + 1):
+                    fetched = ULONG()
+                    result = _invoke(moniker_enum, 3, HRESULT, (ULONG, VOID_PTR, ct.POINTER(ULONG)),
+                                     1, ct.byref(moniker), ct.byref(fetched))
+                    _check(result)
+                    if result != 0 or not moniker:
+                        break
+                    try:
+                        if index in wanted:
+                            names[index] = _friendly_name(moniker, automation)
+                    finally:
+                        _release(moniker)
+                        moniker = VOID()
+            finally:
+                for pointer in (moniker, moniker_enum, device_enum):
+                    _release(pointer)
+    except OSError:
+        pass  # Names must never prevent scanning/streaming a working camera.
+    return names

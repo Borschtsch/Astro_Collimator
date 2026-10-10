@@ -3,7 +3,7 @@
 User decision: **integration tests only, with the same behavioral and failure-case
 coverage as before**. Test count is not the acceptance criterion. Preserve the
 historical files as the coverage reference; do not execute their unit classes.
-No commits or runtime network access.
+No commits or runtime internet access. Optional phone input uses the local network only.
 
 Run `C:\Python313\python.exe -B scripts/test_integration.py`. This explicitly selects
 43 existing app workflows and the new `WorkflowTests` scenarios. It excludes
@@ -328,3 +328,450 @@ The complete persistence workflow also passed after adding Ctrl+wheel resizing
 of retained guides in review (2.888 s). Startup-only visibility, hidden slider
 protection, FOV/blink, small-screen layout, input, camera and tracking coverage
 remain. Native Linux desktop and earlier equivalence gaps remain documented.
+
+## Literal Windows cache path prevention — 2026-10-09
+
+New test_source_startup_repairs_windows_paths_without_literal_cache_folders runs
+the real source launcher/smoke workflow from an isolated checkout. Its first
+child omits Windows path variables and supplies unexpanded ProgramData/WINDIR;
+startup must repair paths before native Tk/shell initialization. A second child
+supplies valid caller ProgramData/ALLUSERSPROFILE paths, which must be preserved.
+Both must complete actual rendering/export and leave no %SystemDrive% folder in
+the working directory or project. Existing Explorer and other startup assertions
+remain intact. Native Linux is unaffected by the Windows-only repair and remains
+subject to the previous VM validation gap. Explorer WinError 5 persists separately.
+
+Full validation: 67 integration scenarios in 84.525 s, 66 passed; unchanged
+Explorer WinError 5 is the only error. The literal cache folder remains absent
+after the shell check and entire suite. Evidence:
+build/gui-validation/windows-cache-path-integration.log. Existing assertions
+and historical tests remain; no unit tests or broad discovery were run.
+
+## Spider vanes and crosshair controls — 2026-10-09
+
+| Workflow | Production behavior and failure coverage |
+| --- | --- |
+| SpiderTests.test_auto_alignment_and_shared_controls | PNG loading, actual full edge/vane analysis, centered two/three/four vanes at several angles, correct automatic blade shape, explicit alignment, unchanged circle assignments/raw pixels, shared manual switch, separate normalized angles, invalid NaN input, complete controls on both tabs at 1280x720/1024x768, raw capture and JSON metadata |
+| SpiderTests.test_uncertain_spiders_and_stale_alignment | No supports, curved supports, displaced supports, severe blur, empty image; four-blade fallback with unchanged angles; pending alignment rejected after manual angle change or source change |
+| SpiderTests.test_crosshair_visibility_rotation_blink_and_live_capture | Hardware-boundary capture substitute with production camera worker, detection, rendering and UI; live three-vane evidence, explicit/manual shape, both tab visibility controls, independent rotation, optical/FOV pixel output and distinct three/four ray geometry, press/release blink, disabling tracking preserves camera capture |
+
+All earlier integration scenarios and assertions remain registered. Crosshair
+layering, startup-only FOV, pan/zoom/FOV-center transforms, tracking/manual
+persistence, capture advice stability, platform/launcher failure cases and native
+input checks continue through the existing mapped workflows. Historical tests
+were retained. No unit tests or broad discovery were run. Earlier coverage
+mapping gaps remain, including native Linux GUI/camera/release validation and
+Explorer shell invocation in this restricted Windows environment. Synthetic
+straight/curved spider fixtures do not establish accuracy for every real camera,
+exposure or unusual support design; field photographs remain a continuation
+validation target.
+
+Validation: 70 integration scenarios, 69 passed, sole existing Explorer WinError
+5 (80.769 s). Strengthened spider-only integration follow-up: all three workflows
+passed (5.544 s). Log: build/gui-validation/spider-crosshair-integration.log.
+
+## Real spider photos and whole-image rotation — 2026-10-10
+
+| Workflow | Production behavior and failure coverage |
+| --- | --- |
+| SpiderTests.test_real_photographs_recognize_clear_vanes_without_moving_image | Actual PNG/JPEG loading, full optical/vane analysis and Auto-align on all three supplied native photographs; four-arm count/direction, annotated-crosshair rejection, bright/faint/partly blocked vanes, unchanged source pixels/circle assignments/image rotation |
+| SpiderTests.test_repeated_image_rotation_preserves_manual_circle_size | Actual image loading/manual-tab setup, explicit missing-circle resize, repeated production rendering through a 0→90→0 degree rotation cycle, exact restored radius/manual override with no invented detection or modified raw pixels |
+| SpiderTests.test_drag_angles_rotate_image_and_preserve_rotated_mouse_workflows | Real drag entry events including Shift precision, actual rotated landmark pixels and preserved frame corners, FOV-only angle changes, raw geometry preserved, rotated FOV-center dragging/rim hits/cursor-anchored zoom/empty-space pan/reset, raw PNG plus separate image/FOV-angle JSON export |
+
+The previous spider UI assertions (image shape, visibility, angles,
+invalid values, stale work, uncertain patterns, blink, camera capture, raw export
+and compact layout) remain in the existing spider workflows. Independent Optical
+angle was intentionally replaced by image rotation; Auto-align now affects FOV
+only. Corresponding semantic assertions were updated, not removed. Toolbar
+bounds are now checked against the shared sidebar instead of tab-local bounds.
+Existing zero-rotation startup/FOV/layering/zoom/pan/manual/tracking workflows
+remain registered. No unit tests or broad discovery. Historical equivalence gaps
+remain; these three photos do not establish reliability for every physical spider,
+exposure, camera or complex background. Native Linux desktop GUI/camera/release
+and restricted Explorer shell invocation remain documented platform gaps.
+
+Final validation: 73 integration scenarios, 72 passed (106.025 s), only the
+existing Explorer WinError 5. Continuous coarse-to-Shift-fine dragging was added
+and the complete rotated mouse/render/export workflow passed again (1.188 s).
+Evidence: build/gui-validation/image-rotation-integration.log. No earlier
+behavioral or failure-case assertions were deleted; documented gaps remain.
+
+## One crosshair, complete view reset and fixed-scale pivot — 2026-10-10
+
+| Workflow | Production behavior and failure coverage |
+| --- | --- |
+| GuiTests.test_crosshair_drag_moves_guides_and_follows_full_frame_through_view_changes | Single intersection/rim hit targets, shared group dragging and recentering, raw measurements unchanged, full-field rendering through zoom/reset, ordinary pan space outside the intersection, picking-mode protection |
+| GuiTests.test_crosshair_follows_tracking_detect_exports_and_recenters_on_source_change | Crosshair follows the detected master during live movement and fresh detection, actual capture metadata, source/camera recentering, raw-image integrity |
+| GuiTests.test_single_crosshair_has_thicker_center_and_hides_as_one_reference | Thin long arms and brighter center layer together, one visibility toggle, blink and raw-image preservation |
+| SpiderTests.test_crosshair_visibility_rotation_blink_and_live_capture | Sole checkbox available above both tabs, no second crosshair state, one toggle hides/restores both long arms and center; retained three/four rays, live capture, rotation, blink and tracking pause coverage |
+| SpiderTests.test_drag_angles_rotate_image_and_preserve_rotated_mouse_workflows | Fixed-scale rotated landmark rendering, coarse/fine drag angles, crosshair-only angle changes, measured geometry unchanged, shared pivot dragging, rim hit testing, cursor-anchored zoom, screen-space pan, Reset view clears both angles, raw PNG and rotation metadata |
+| SpiderTests.test_rotation_uses_crosshair_pivot_at_fixed_scale_and_source_load_resets_view | Actual loaded image at zoom 1 and 2, off-center pivot fixed through 23.57/45/90/180 degrees, unchanged distances and scale, exact inverse mapping, rotated pixels outside the unrotated zoom crop, Reset view rejects pending alignment and clears angles/pan/zoom while retaining the chosen center, loading another PNG resets viewport/angles/source guides |
+
+The old independent guide/FOV visibility and center invariants are intentionally
+replaced by the user's request for one reference. The old angle-dependent corner
+fit is intentionally replaced by fixed scale with viewport clipping. Existing
+raw-measurement, source-reset, mouse, camera, blink, stale-work, invalid-angle,
+uncertain-vane and small-screen assertions remain covered by these updated and
+unchanged production workflows. The legacy fov_crosshair JSON key aliases the
+canonical crosshair metadata; it does not represent another state. Historical
+tests and earlier coverage gaps remain, including restricted Explorer shell
+launch and native Linux desktop/camera/release validation.
+
+Validation: `python -B scripts/test_integration.py` ran 74 integration scenarios
+in 104.303 s: 73 passed, with only the existing Explorer `os.startfile` WinError
+5 before application launch. Evidence:
+`build/gui-validation/unified-crosshair-rotation-integration.log`. Four focused
+shared-center/rotation/reset/image-load workflows also passed (4.708 s).
+No unit tests were added or run. Previously documented coverage gaps remain.
+
+## Independent FOV, stable overlay edits and antialiased rendering — 2026-10-10
+
+| Workflow | Behavioral and failure coverage |
+| --- | --- |
+| GuiTests.test_fov_drag_keeps_guides_fixed_and_follows_full_frame_through_view_changes | Independent FOV drag/recenter across pan/zoom/reset, unchanged detection/group center, rim drags leave FOV fixed, small intersection target, picking protection |
+| GuiTests.test_fov_position_survives_tracking_detect_exports_and_recenters_on_source_change | Actual rotated live capture and new detected master: FOV position and image affine mapping remain unchanged; fresh detection/export, source/camera resets and raw pixels retained |
+| SpiderTests.test_overlay_edits_keep_rotated_pixels_fixed_and_angle_edits_use_current_center | Actual loaded-file rendering for FOV-only/manual/detected modes at zoom 1/2 and angles 0/37.25/90; inverse-rotation drags, independently fixed guide/FOV centers, pixel-identical image after drags/arrows/recentering/detection; next angle edit pivots around current FOV screen intersection; composed-transform cursor zoom and screen-space pan verified against landmarks; source load clears prior composition |
+| SpiderTests.test_manual_tab_on_rotated_zoomed_file_has_no_frame_jitter | Actual PNG load at zoom 2/37.25 degrees, 24 rendered frames and repeated automatic/manual tab switches: identical pixel output, image matrix, guide center and radii, independent FOV position, unchanged raw frame and no invented detection |
+| SpiderTests.test_auto_alignment_and_shared_controls | Existing real analysis workflow additionally checks Aligning…/Aligned feedback without vane count; invalid angles, uncertain designs, stale result and layout/export checks retained |
+| GuiTests startup/manual/center-layer workflows and SpiderTests live visibility workflow | Antialiased stroke colors/geometry and startup feather pixels; circle visibility, center layering, three/four ray shapes, one crosshair toggle, blink and live stream remain covered |
+
+Latest user clarification restores independent FOV and guide centers, replacing
+the prior shared-reference-center assertions while retaining their underlying
+mouse/raw-measurement/camera/reset coverage. Image transforms are composed only
+on image-angle edits; moving references no longer rebases image pixels. Overlay
+drags again use the inverse rotated-image mapping; viewport panning remains in
+screen axes. Exact jagged-line pixel assumptions were replaced by strong color,
+location, feathering and visibility checks for antialiased rendering; unchanged
+raw landmarks and frame identity remain exact. New JSON pivot/translation fields
+describe the composed image transform. Historical tests and documented coverage
+gaps remain, including native Linux desktop/camera/releases and Explorer shell
+launch under restricted Windows. No unit tests were added or run.
+
+Validation: final prescribed runner, 76 scenarios in 112.783 s, 75 passed;
+only existing Explorer shell-start WinError 5 remains. The overlapping-center
+scenario hides the FOV handle before dragging the guide center, retaining all
+group geometry, raw image, export and fresh-detection reset assertions and adding
+unchanged FOV position. Evidence:
+`build/gui-validation/independent-fov-antialiasing-integration.log`.
+
+## FOV Crosshair group and exact rendered pivot — 2026-10-10
+
+| Workflow | Behavioral and failure coverage |
+| --- | --- |
+| SpiderTests.test_fov_group_order_enablement_and_pending_alignment | Actual shared controls above both tabs; FOV Crosshair legend and adjacent blade switch; Center/Auto-align/status order above Reset view at 1280×720 and 1024×768; checkbox disables angle/shape/center/alignment, ignores disabled drag/button actions, rejects pending alignment, reenables valid alignment; independent image angle and Reset view stay enabled |
+| SpiderTests.test_fractional_image_pivot_and_white_fov_marker_independence | Actual loaded PNG, Tk-rendered image centroid at fractional FOV center for zoom 1/2 and image angles 0/0.01/37.25/90/180; pixel sampling consistent at zero angle; white center stays at FOV when manual group moves, follows only FOV, hides with checkbox; raw image exact |
+| GuiTests.test_maximized_startup_and_keyboard_fullscreen_keep_source_and_view | Decorated maximized startup, fullscreen button absent; optional keyboard-bound fullscreen actions retain source/session/zoom, restore normal or maximized state and title decorations |
+| Existing startup/layering/visibility, live capture, overlay-drag, image-rotation, tab-jitter and compact-layout workflows | Retain rays, shape changes, one FOV checkbox, blink, circle visibility, stale work, invalid angles, source resets, transform geometry and raw exports; full review text and controls fit ordinary screen sizes without jumping |
+
+The removed fullscreen button is an intentional UI change; its window-state and
+source-preservation checks remain through the retained keyboard action. The
+white center accent now appears with FOV even before guides/detection, replacing
+an old guide-dependent visibility assumption. Strong red ray checks accept
+antialiasing at fractional pixel positions while still checking red dominance,
+geometry and startup feathering. The image centroid test checks rendered pixels,
+not only mathematical transform agreement. The thicker white accent retains
+three adjacent bright neutral pixels; fractional antialiasing permits a feathered
+side pixel instead of requiring every side pixel to be exactly 255. Native Linux desktop/camera/release,
+restricted Explorer launch and previously recorded equivalence gaps remain.
+
+Final validation: `python -B scripts/test_integration.py` ran 78
+integration scenarios in 139.751 s: 77 passed, with only the existing
+restricted Explorer `os.startfile` WinError 5 before application launch. Evidence:
+`build/gui-validation/fov-group-pixel-pivot-integration.log`. No new behavioral
+or failure-case coverage gaps; previously documented platform/equivalence gaps
+remain. No Git operations or unit tests.
+
+## White circle-center marker, centered reset and quiet success — 2026-10-10
+
+| Workflow | Retained coverage and corrected behavior |
+| --- | --- |
+| GuiTests.test_startup_only_fov_and_manual_tab_visibility | Startup has red FOV only, no white guide marker; manual circle presets, layering, tab visibility, colors and hit targets retained |
+| GuiTests.test_white_guide_center_is_thicker_and_independent_of_fov_visibility | Actual detected circles render a thick white center; FOV toggle removes red rays while white guide marker stays; blink removes/restores both; raw detection unchanged |
+| SpiderTests.test_fractional_image_pivot_and_white_circle_center_independence | Loaded image pixel centroid for fractional FOV pivots at zoom 1/2 and rotations 0/0.01/37.25/90/180 retained; white marker follows manual circle center, FOV edits/toggle keep marker fixed, guide visibility removes marker, raw pixels exact |
+| GuiTests.test_fov_drag_keeps_guides_fixed_and_follows_full_frame_through_view_changes; SpiderTests.test_rotation_uses_crosshair_pivot_at_fixed_scale_and_source_load_resets_view | Reset explicitly centers FOV while retaining guide geometry; existing independent dragging, inverse transform, zoom/pan, fixed-scale rotation, stale alignment rejection and source resets retained |
+| SpiderTests.test_auto_alignment_and_shared_controls; test_fov_group_order_enablement_and_pending_alignment; test_crosshair_visibility_rotation_blink_and_live_capture | Successful alignment updates angles without Aligned announcement or replacing capture advice; progress, uncertain designs, invalid angles, generation rejection, control enablement, shape, live stream, blink and export retained |
+
+The user's clarification intentionally replaces white-at-FOV and reset-keeps-FOV
+assumptions. The small white marker belongs to circle guides; the large red FOV
+remains independent and remains the image-rotation pivot. Historical assertions
+and coverage entries above describe earlier behavior. Integration tests retain
+all underlying mouse, pixel, source, failure and platform coverage under the
+corrected semantics. Previously documented Explorer/native Linux/equivalence
+gaps remain; no unit tests or Git operations.
+
+Final layout steering: the angle entry occupies the former alignment-status
+position inside the group, beside Auto-align; the legend holds only checkbox
+and blade switch. The production widget workflow checks matching row positions,
+angle below the legend, removal of status widget, disabled input, pending-result
+rejection and compact layout. Busy feedback is displayed in the disabled
+Auto-align button; uncertain/error advice remains.
+
+Final validation: `python -B scripts/test_integration.py` ran 78
+integration scenarios in 148.285 s: 77 passed; only the existing
+restricted Explorer `os.startfile` WinError 5 occurred before application launch.
+Evidence: `build/gui-validation/circle-center-reset-angle-layout-integration.log`.
+No new coverage gaps; documented native Linux and historical equivalence gaps
+remain. No unit tests or Git operations.
+
+## Matching white guide-marker shape and angle — 2026-10-10
+
+SpiderTests.test_white_guide_marker_matches_fov_shape_and_angle uses actual
+loaded PNGs, Tk rendering and shared controls to check white/red ray positions
+for four blades at 0/45 degrees and three blades at 0/90/13.37 degrees, including
+37.25/90-degree image rotations. Missing diagonal/opposing rays distinguish
+three/four patterns. FOV hides independently without changing the white patch;
+raw source pixels remain exact. Production detection and Auto-align on three
+and four straight-vane fixtures update the white marker's rays automatically.
+The earlier fixed white-angle/four-blade behavior is intentionally replaced;
+independent centers, circle/FOV visibility, blink, pixel transforms, source/reset,
+error and pending-work coverage remain. Existing native Linux, Explorer launch
+and historical equivalence gaps remain. No unit tests or Git operations.
+
+## Image-based Auto-align and Detect alignment — 2026-10-10
+
+| Workflow | Behavior and failure coverage |
+| --- | --- |
+| SpiderTests.test_detect_rotates_image_once_and_keeps_crosshair_fixed | Loaded PNG at zoom 2, nonzero image/FOV angles and off-center pivot; Detect rotates actual raw landmark pixels, preserves visible FOV orientation/position and numeric crosshair angle, aligns measured vanes; repeated Auto-align yields identical pixels/matrix; export records shared compensation and retains exact raw PNG; Reset clears compensation while keeping guides; reset or angle edit during in-flight detection rejects automatic rotation |
+| SpiderTests.test_auto_alignment_and_shared_controls | Detect + Auto-align on 3/4/2/3 supports at several angles; image-angle accuracy replaces old crosshair-angle mutation; crosshair angle/raw image/selections unchanged; progress/silent success, manual blade switching, invalid angles, compact layout and export checks retained |
+| SpiderTests.test_real_photographs_recognize_clear_vanes_and_rotate_display_only | Same three real photographs and detector accuracy; displayed image turns, FOV angle/raw pixels/edge selection remain unchanged |
+| SpiderTests.test_uncertain_spiders_and_stale_alignment; existing live/overlay/image mouse workflows | Uncertain/blurred/curved/offset inputs retain rotations; source and manual-angle changes reject in-flight alignment; matching markers, live stream, held tracking, rotated drags, pivot and zoom/pan remain covered |
+
+Auto-align intentionally replaces the former FOV-angle change with image rotation
+and a shared render compensation that keeps crosshair orientation fixed. Only
+explicit Detect aligns automatically; background analysis refreshes vane
+evidence without changing rotation. Reset/source load clears compensation.
+Metadata retains the user angle and adds rotation_compensation_deg and
+render_angle_deg; existing JSON aliases/raw exports remain. All historical
+tests and coverage gaps remain; native Linux desktop/camera/releases and
+restricted Explorer launch are still unvalidated.
+
+Final validation: `python -B scripts/test_integration.py` ran 80
+integration scenarios in 160.966 s: 79 passed; only existing restricted
+Explorer `os.startfile` WinError 5 before application launch remains. Evidence:
+`build/gui-validation/image-auto-align-detect-integration.log`. No new coverage
+gaps; previously documented Linux desktop/release and historical equivalence
+gaps remain. No unit tests or Git operations.
+
+## Rotation steps, radius dragging and application rename — 2026-10-10
+
+| Workflow | Behavior and failure coverage |
+| --- | --- |
+| SpiderTests.test_rotation_step_buttons_branding_and_view_order | Actual ± buttons give 0.01° steps, 0/360 wrap, pending typed value and invalid-text recovery; FOV buttons disabled with checkbox, image buttons remain available; raw center preserved; both tabs at 1280×720/1024×768, view toolbar above FOV group above tabs, Rotation label, visible button bounds; Advanced Astro Collimator window title and actual start.py --version subprocess |
+| GuiTests.test_radius_horizontal_drag_tracks_pixels_and_cancels_safely | Real focused Tk press/motion/release at zoom 2/37.25°; whole raw-image radius with coarse-to-Shift fine motion, selected radius only, common center and other sizes preserved, tracking/image held through drag and stream resumes on release; lower-bound clamping/reversal, invalid values, Escape and mid-drag source-change cancellation without new-source advice corruption |
+| Existing radius entry/buttons/wheel/tracking and image/marker/angle workflows | Typed Enter/Escape validation, exact radius, manual references, tracking retention, image and crosshair drag angles, matching rays, auto-alignment, disabled controls, raw exports, errors and compact guidance coverage retained |
+
+The requested ordering intentionally replaces Auto-align above Reset view with
+view controls above the FOV group. Package metadata, launcher/error UI, native
+release build configuration and current user documentation use Advanced Astro
+Collimator / AdvancedAstroCollimator. Historical release evidence and archives
+retain their original names; new native release binaries have not been built.
+This release-artifact branding and native Linux desktop/camera/release behavior
+remain explicit validation gaps, together with restricted Explorer launch and
+previously documented historical equivalence gaps. No unit tests or Git operations.
+
+Rounded-scale follow-up: retained the strict Auto-align displayed-direction
+assertion by deriving correction/compensation through real forward/inverse
+vectors when viewport dimensions round to nonuniform scales. White marker
+checks still require three contiguous bright neutral pixels; fractional
+subpixel placement permits a feathered side pixel ≥180 (measured 181 at half
+pixel) instead of demanding exact 255. Blink, layering, location and red-ray
+checks remain. Native build CLI reports no CPU architecture in this isolated
+64-bit environment, so artifact-branding validation remains pending.
+
+Final validation: `python -B scripts/test_integration.py` ran 82 integration
+scenarios in 163.621 s: 81 passed; one existing Explorer association scenario
+failed before application launch with `os.startfile` WinError 5 (Access denied).
+No application workflow failures remain. Evidence:
+`build/gui-validation/rotation-radius-branding-integration.log`. Coverage mapping
+retains existing workflows and failure cases, plus the two new GUI scenarios.
+Release artifacts remain unbuilt; native Linux desktop/camera/releases, Explorer
+launch in this restricted environment and earlier historical equivalence gaps
+remain explicitly unvalidated. No unit tests or Git operations.
+
+## Named camera selection and detection action — 2026-10-10
+
+| Workflow | Behavior and failure coverage |
+| --- | --- |
+| WorkflowTests.test_named_camera_selection_refresh_fallback_and_detection_label | Production Linux discovery/worker/Tk with sysfs/ioctl/capture hardware boundary; duplicate names map to separate indices, real selector event switches stream, refresh retains index after rename or inaccessible names, resume selected camera after image detection/export; exact detection button label and ordinary-screen width |
+| WorkflowTests.test_windows_native_camera_names_scan_stream_and_refresh | Actual Windows DirectShow names, worker scan and Tk selector with capture boundary substitute; labels agree with native enumeration, switch to second index and retain it on refresh |
+| Existing Linux query/permission and no-camera/switch/stale/stream workflows | Driver control ranges, resources, permission fallback, no-camera recovery, selection and stream lifecycle remain; labels intentionally now include available names |
+
+Two integration workflows added without removing prior behavioral/failure
+coverage. Windows FriendlyName query succeeds on this host (USB2.0 HD UVC
+WebCam). Name-read permission failure and blank fallback covered through Linux
+hardware boundary. Windows COM failure/cleanup branches not directly forced;
+native Linux desktop/camera/release and existing Explorer/historical equivalence
+gaps remain. Runtime uses only native local APIs. Full runner result follows.
+
+Camera-name validation before the outline-chooser steering: the full explicit
+runner completed 84 scenarios in 174.754 s; 83 passed and the existing Explorer
+os.startfile WinError 5 remained. Evidence: build/gui-validation/camera-names-integration.log.
+
+## Direct circle editing replaces outline navigation — 2026-10-10
+
+| Existing workflow adapted | Preserved behavioral/failure coverage |
+| --- | --- |
+| GuiTests.test_static_detection_draws_guides_without_confirmation | Automatic named guides, no confirmation, live stream, clear selected reference and resume/manual state; clear action replaces chooser's unassigned selection |
+| GuiTests.test_outline_replacements_keep_roundness_and_the_master_center | Same oval fixture rejects unverified focuser; actual three-point manual replacement establishes master; actual typed radius events edit each role while preserving roundness and common center; fresh Detect retains no-confirmation/roundness |
+| GuiTests.test_named_outlines_hide_extra_hypotheses_and_guidance_advances | Added unused hypothesis changes no rendered pixels; chooser widgets absent; manual replacement yields distinct id, one per role, new focuser master/shared center; clear selects another master, restart restores best guesses, capture advice and compact layout |
+
+Candidate cycling/selection UI is intentionally retired by user request, and its
+geometry/master/clear/uniqueness coverage is exercised through supported direct
+editing/manual replacement. Detector ranking/thresholds, uncertain-input advice,
+raw observation metrics, tracking retention, mouse/typed/drag radius editing and
+platform workflows remain covered. Historical cases preserved; no new coverage
+gaps apart from the already recorded platform/native COM failure paths.
+
+Final validation: `python -B scripts/test_integration.py` completed 84 scenarios
+in 163.678 s: 83 passed; only the existing Explorer `os.startfile` WinError 5
+(Access denied, before app launch) remains. Evidence:
+`build/gui-validation/camera-names-direct-guides-integration.log`. Afterward, the
+missing-guide hint was corrected to name Pick center for the mark and Pick edge
+for rims; the complete named-outline/manual replacement/guidance/layout scenario
+passed again in 1.998 s, including both exact action-label assertions. Evidence:
+`build/gui-validation/direct-guide-action-label-integration.log`. All previous
+behavioral/failure coverage is mapped; chooser navigation is intentionally retired.
+Native Linux desktop/camera/release, forced Windows COM name-query failure cleanup,
+restricted Explorer launch and historical equivalence gaps remain documented.
+Runtime stays offline; no unit tests, Git operations or new release builds.
+
+## Consistent rotation adjustment layout — 2026-10-10
+
+SpiderTests.test_rotation_step_buttons_branding_and_view_order now also verifies
+actual horizontal widget ordering/nonoverlap and shared row alignment for minus,
+label, entry, degree unit and plus on both rotation rows, both guide tabs and
+1280x720/1024x768. Existing angle-step/wrap/invalid input/disabled controls, raw
+center and launcher assertions retained. Existing group/pending-alignment and
+rotated-angle dragging workflows pass. No scenarios removed or coverage gaps
+introduced; native Linux/COM failure/Explorer/historical gaps remain.
+
+Final validation: `python -B scripts/test_integration.py` ran 84 scenarios in
+178.085 s: 83 passed, with only existing Explorer os.startfile WinError 5
+(Access denied before app launch). Evidence:
+`build/gui-validation/rotation-control-order-integration.log`. Existing scenario
+coverage retained and layout assertions extended; no new validation gaps. Native
+Linux desktop/camera/releases, forced Windows COM failure cleanup and earlier
+historical/Explorer gaps remain. No unit tests, Git operations or release build.
+
+## Phone photo/video source and local certificate identity — 2026-10-10
+
+The previous 84 workflow scenarios remain explicitly selected. The no-camera
+scenario now verifies a selectable phone option instead of a disabled camera
+selector, while retaining physical-camera refresh/recovery assertions. No old
+scenario or historical file was removed. New PhoneTests workflows use real Tk,
+local HTTP/HTTPS sockets, production image decoders, detection/tracking/averaging
+and raw PNG/JSON export. The browser runs the actual bundled HTML/JS with virtual
+camera hardware; its test context accepts local HTTPS without installing OS trust.
+Separate real TLS requests verify CA chain, IP hostname and the peer fingerprint.
+
+| Behavior / failure path | Production integration workflow |
+| --- | --- |
+| Camera selection, actual displayed QR decoding, original PNG bytes, EXIF orientation, HEIC, fresh view/detection, clean paired export, ordinary screen bounds | PhoneTests.test_photo_qr_exif_heic_auto_detection_and_raw_export |
+| PC dialog/page/actual TLS peer SHA-256 agreement, root download, certificate-only iOS profile, locally unique identities, persistent root, HTTPS photo receipt | PhoneTests.test_local_tls_identity_matches_pc_phone_peer_and_persists |
+| Damaged/incomplete optional certificate identity is retained; HTTP photos/detection still work and trust controls are unavailable | PhoneTests.test_http_photos_survive_failed_optional_certificate_setup |
+| Live source independent of USB controls, latest-only mailbox, tracking pause keeps preview, stale advice excluded from export, unmatched manual radius retained, stop/restart and manual reconnect retention | PhoneTests.test_live_phone_tracking_pause_latest_frame_manual_retention_and_disconnect |
+| Actual paced phone frames average while steady, real four-second stream-loss timeout, QR restoration and unchanged zoom/rotation on reconnect | PhoneTests.test_live_phone_averaging_timeout_and_reconnect_keep_view |
+| New photo during pending detection is analyzed with matching pixels/size and at most one analysis worker | PhoneTests.test_new_photo_during_detection_uses_latest_image_without_parallel_analysis |
+| Incomplete slow upload bounds decoding, simultaneous image rejected with 503, stop still responds, late frame rejected and next photo succeeds | PhoneTests.test_slow_upload_backpressure_allows_stop_and_rejects_late_frame |
+| Wrong Host/token/cross-origin, corrupt/tiny/excessive-pixel/oversize photos, malformed stream JSON, duplicate/out-of-order/wrong-stream frames and photo ending video | PhoneTests.test_receiver_rejects_bad_inputs_origins_tokens_and_stale_frames |
+| File/phone/webcam switches, Live camera returning to chosen phone, stopped ports, startup cancellation/shutdown and receiver threads retiring | PhoneTests.test_phone_switch_to_file_webcam_and_shutdown_releases_ports |
+| Real mobile-size browser photo receipt, raw-file fidelity, shown fingerprint, HTTP→HTTPS video navigation, actual media/canvas/frame uploads, stop, no JS errors or external page requests | PhoneTests.test_mobile_browser_photo_and_video_use_production_page_and_receiver |
+
+Gaps explicitly retained: real Android/iPhone capture and certificate-install/trust
+UI, physical LAN/firewall/adapter behavior, native Linux desktop/camera/receiver
+and rebuilt native releases. Pixel-limit rejection is exercised using a valid
+PNG header, not a full 60 MP image allocation. Browser permission-denial and
+phone-specific HEIC/orientation variants remain device validation. Previous
+historical equivalence and forced native COM failure-path gaps remain recorded
+above. Browser tooling missing from a test environment is an explicit skipped
+workflow, never a claim of coverage. No unit tests or broad discovery are used.
+
+Final validation: `.venv/Scripts/python.exe -B scripts/test_integration.py`
+passed all 94 scenarios in 235.656 s, with no skips. Evidence:
+`build/gui-validation/phone-native-final-integration.log`. This retains the prior
+84 workflows and adds 10 complete phone-source workflows. Real Windows native
+wheel input and Explorer association passed in this run. The source wheel was
+built and its mobile assets/personal-key/test exclusions verified. Real Android/
+iPhone capture and trust UI, physical LAN/firewalls, native Linux desktop/adapter/
+camera behavior and rebuilt portable executables remain unvalidated; earlier
+historical equivalence/native COM failure gaps remain recorded. No Git operations,
+unit tests, broad discovery, OS trust changes or firewall changes.
+
+## Startup dependency gate and main-view QR — 2026-10-10
+
+All previous 94 workflows remain selected. The existing missing-dependency launch
+workflow now checks the aggregate report for every required package and retains
+nonzero exit, interpreter/log and untouched-settings assertions. The new
+WorkflowTests.test_source_launcher_rejects_missing_phone_packages_and_broken_native_codec_then_recovers
+uses an isolated real installation: copies the existing optical dependencies,
+omits the three phone dependencies, installs real packages offline, removes only
+the copied native HEIF extension, then repairs it and completes the production
+launcher/detection/export smoke workflow. No import/detector substitutions.
+
+The photo workflow additionally decodes the main-view QR, checks actual widget
+bounds at 1024x768 and 1280x720, verifies received images replace the card, toggles
+QR/image without losing pixels, and checks hidden-image wheel/drag isolation.
+Existing stop/timeout/reconnect workflows retain QR restoration and manual/view
+retention assertions. Damaged local identity keeps HTTP photos and now checks the
+shown cause and token-free error log with interpreter location.
+
+Coverage gaps retained: real phone trust/capture UI and LAN/firewalls, native Linux
+desktop/camera/releases, forced native COM failure and historical equivalence.
+Tk/display failure is checked at production startup but is not induced in the
+Windows integration environment; catastrophic native-library process crashes
+cannot be converted into Python startup dialogs. No unit tests or broad discovery.
+
+Final validation: `.venv/Scripts/python.exe -B scripts/test_integration.py`
+passed all 95 production integration scenarios in 222.335 s, without skips.
+Evidence: `build/gui-validation/startup-phone-view-integration.log`. This includes
+actual Explorer startup through the associated system interpreter, the repaired
+real-package/native-codec workflow, main-view QR decoding/layout/state transitions,
+local HTTP/TLS and the production mobile browser page. Native Linux desktop, real
+iPhone/Android capture/trust UI, physical LAN/firewall behavior and rebuilt portable
+releases remain unvalidated; historical equivalence/native COM failure gaps are
+still recorded. No Git operations, unit tests, broad discovery or trust changes.
+
+## Browser shutter and shared camera zoom — 2026-10-10
+
+All prior 95 scenarios remain selected. Existing real mobile-browser workflow
+retains original HTTP file fidelity, certificate display/navigation, real video
+frames/stop, no external requests and JS-error checks. It now verifies browser
+preview/shutter with no native-camera capture input, actual still receipt and
+desktop detection, reusable preview after Stop video, and camera release. Browser
+route callbacks are serviced until real successful frame/photo responses before
+waiting separately on Tk; receipts include both frames and stills.
+
+New PhoneTests.test_browser_camera_zoom_stills_live_transition_and_hardware_failures
+uses the production page, real browser track/image capture/canvas, local HTTPS
+receiver, desktop analysis and raw PNG export. The fixture decorates only camera
+hardware interfaces to expose reported ranges and camera-specific failures.
+Coverage: reported min/max/step, serial/latest zoom requests, native still with
+shared zoom, rejected and ignored constraints reverting to actual setting, zoom
+during real video, native-still failure producing an uncropped PNG preview frame,
+video-to-photo receipt/source switch, unsupported zoom retaining photo capture,
+permission denial with file upload still available, and cancelled acquisition
+releasing late tracks. No detector/server/Tk/transfer substitutions.
+
+Gaps retained: actual mobile optical versus digital/lens-switch behavior, Safari/
+iOS-specific fallback and permission/trust UI, real LAN/firewalls, Linux desktop/
+camera/releases, native COM failure and historical equivalence. Browser without
+the ImageCapture constructor is handled in production but not reproduced by a
+second real browser engine here; native-still hardware rejection covers the
+preview PNG path. Captured zoom correctness on physical optics requires a phone.
+No unit tests, broad discovery or Git operations.
+
+Final validation: `.venv/Scripts/python.exe -B scripts/test_integration.py`
+passed all 96 production integration scenarios in 214.512 s, without skips.
+Evidence: `build/gui-validation/browser-photo-zoom-integration.log`. All previous
+95 scenarios remain selected, with the existing browser workflow extended and
+one complete camera-capability/failure workflow added. Native browser still
+capture, full-frame PNG fallback, shared camera zoom control, unsupported/ignored/
+rejected zoom, permission denial, cancellation, video/photo switching and raw
+export passed through production components. Screenshot:
+`build/gui-validation/phone-camera-zoom.png` (390px mobile view, inspected).
+The user reports existing phone video works; device/browser identity is not
+recorded. Physical optical zoom and new browser still capture on real phones,
+Safari/iOS-specific capture/permissions/trust, LAN/firewall behavior, native Linux
+desktop/camera/releases, rebuilt portable executables, native COM failure and
+historical equivalence gaps remain. No Git operations, unit tests, broad discovery,
+certificate installation or added runtime dependencies.

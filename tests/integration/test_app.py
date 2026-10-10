@@ -20,12 +20,12 @@ from source.app import CameraWorker, WebcamApp, prepare_frame
 from source.camera_properties import PropertyInfo
 from source.ui_platform import window_state, set_window_state
 from source.app_options import OptionsStore, TelescopeProfile
-from tests.fixtures.images import optical_fixture
+from tests.fixtures.images import optical_fixture, spider_fixture, red_pixels, color_matches
 from tests.fixtures.camera import FakeCapture
 
 
 class GuiTests(unittest.TestCase):
-    def make_app(self, factory, capabilities=None, saved_options=None, live_tracking=False, native_camera=False):
+    def make_app(self, factory, capabilities=None, saved_options=None, live_tracking=False, native_camera=False, native_names=False):
         root = tk.Tk()
         # Map widgets invisibly so Tk exercises real Scale idle callbacks.
         root.attributes("-alpha", 0.0)
@@ -41,7 +41,8 @@ class GuiTests(unittest.TestCase):
         root.report_callback_exception = lambda *error: self.callback_errors.append(error)
         with (nullcontext() if native_camera else patch("source.app.open_camera", side_effect=factory)), \
                 (nullcontext() if native_camera else patch("source.app.query_camera_properties", return_value=capabilities or {})), \
-                (nullcontext() if native_camera else patch("source.app.camera_indices", return_value=range(10))):
+                (nullcontext() if native_camera else patch("source.app.camera_indices", return_value=range(10))), \
+                (nullcontext() if native_camera or native_names else patch("source.app.query_camera_names", return_value={})):
             self.app = WebcamApp(root, self.options_store)
         self.startup_fullscreen = bool(root.attributes("-fullscreen"))
         deadline = time.monotonic() + 3
@@ -67,6 +68,9 @@ class GuiTests(unittest.TestCase):
             self.app.analysis_thread.join(2)
             self.assertFalse(self.app.analysis_thread.is_alive())
         self.assertEqual(self.callback_errors, [])
+        if self.app.vane_thread:
+            self.app.vane_thread.join(2)
+            self.assertFalse(self.app.vane_thread.is_alive())
         # Retire closed test windows on Tk's owning thread, before the next
         # analysis worker can trigger collection of their widget/variable cycles.
         self.app = None
@@ -82,7 +86,7 @@ class GuiTests(unittest.TestCase):
             time.sleep(0.005)
         self.fail("Timed out waiting for UI state")
 
-    def test_maximized_startup_and_optional_fullscreen_keep_source_and_view(self):
+    def test_maximized_startup_and_keyboard_fullscreen_keep_source_and_view(self):
         app = self.make_app(lambda index: FakeCapture(index, opened=False))
         self.assertFalse(self.startup_fullscreen)
         self.assertEqual(self.startup_window_state, "zoomed")
@@ -92,21 +96,21 @@ class GuiTests(unittest.TestCase):
         session = app.session
         self.assertTrue(self.root.bind("<F11>"))
         self.assertTrue(self.root.bind("<Escape>"))
-        app.fullscreen_button.invoke()
+        app.toggle_fullscreen()
         self.wait_until(lambda: bool(self.root.attributes("-fullscreen")))
         self.assertTrue(self.root.attributes("-fullscreen"))
-        self.assertEqual(app.fullscreen_button.cget("text"), "Windowed")
+        self.assertFalse(hasattr(app, "fullscreen_button"))
         app.exit_fullscreen()
         self.wait_until(lambda: not self.root.attributes("-fullscreen"))
         self.assertFalse(self.root.attributes("-fullscreen"))
-        self.assertEqual(app.fullscreen_button.cget("text"), "Fullscreen")
+        self.assertFalse(hasattr(app, "fullscreen_button"))
         self.assertEqual(app.zoom_factor, 2)
         self.assertEqual(app.session, session)
         np.testing.assert_array_equal(app.last_frame, optical_fixture())
         self.assertFalse(self.root.overrideredirect())
         set_window_state(self.root, "zoomed")
         self.wait_until(lambda: window_state(self.root) == "zoomed")
-        app.fullscreen_button.invoke()
+        app.toggle_fullscreen()
         self.wait_until(lambda: bool(self.root.attributes("-fullscreen")))
         self.assertEqual(app.windowed_state, "zoomed")
         app.exit_fullscreen()
@@ -157,21 +161,21 @@ class GuiTests(unittest.TestCase):
         app.fov_checkbox.invoke()
         def rendered():
             return np.array(ImageTk.getimage(app.video_label.image))
-        self.wait_until(lambda: rendered()[:, app.video_width // 2, 0].max() == 255)
+        self.wait_until(lambda: red_pixels(rendered()[:, app.video_width // 2, :3]).any())
         transform = app.display_transform
         center = tuple(round(v) for v in transform.to_display(app.fov_crosshair_center()))
         reference = rendered()
-        self.assertEqual(tuple(reference[15, center[0], :3]), (255, 0, 0))
-        self.assertEqual(tuple(reference[center[1], 15, :3]), (255, 0, 0))
+        self.assertTrue(red_pixels(tuple(reference[15, center[0], :3])))
+        self.assertTrue(red_pixels(tuple(reference[center[1], 15, :3])))
         app.fov_checkbox.invoke()
         self.wait_until(lambda: not rendered()[:, :, :3].any())
         app.fov_checkbox.invoke()
-        self.wait_until(lambda: rendered()[15, center[0], 0] == 255)
+        self.wait_until(lambda: red_pixels(rendered()[15, center[0], :3]))
         app.begin_blink()
         self.wait_until(lambda: not rendered()[:, :, :3].any())
         self.assertIsNone(app.circle_at(center))
         app.end_blink()
-        self.wait_until(lambda: rendered()[15, center[0], 0] == 255)
+        self.wait_until(lambda: red_pixels(rendered()[15, center[0], :3]))
         app.overlays_visible.set(False)
         self.wait_until(lambda: not rendered()[:, :, :3].any())
         self.assertTrue(app.fov_crosshair_visible.get())
@@ -182,7 +186,7 @@ class GuiTests(unittest.TestCase):
             self.assertTrue(app.fov_checkbox.winfo_ismapped())
             self.assertTrue(app.fov_center_button.winfo_ismapped())
 
-    def test_fov_drag_keeps_optical_guides_fixed_and_follows_full_frame_through_view_changes(self):
+    def test_fov_drag_keeps_guides_fixed_and_follows_full_frame_through_view_changes(self):
         app = self.make_app(lambda index: FakeCapture(index, opened=False))
         self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
         app.last_frame = optical_fixture()
@@ -215,13 +219,14 @@ class GuiTests(unittest.TestCase):
         self.wait_until(lambda: app.display_transform.crop_width == 400)
         np.testing.assert_allclose(app.fov_crosshair_center(), expected)
         cross = tuple(round(v) for v in app.display_transform.to_display(expected))
-        self.assertEqual(ImageTk.getimage(app.video_label.image).getpixel((cross[0], 15))[:3], (255, 0, 0))
+        self.assertTrue(red_pixels(ImageTk.getimage(app.video_label.image).getpixel((cross[0], 15))[:3]))
         self.assertEqual(app.circle_at(cross)["kind"], "fov")
         # A distant crosshair line is still ordinary pan space, not a huge hit target.
         self.assertIsNone(app.circle_at((cross[0], 5)))
         app.reset_view()
         self.wait_until(lambda: app.display_transform.crop_width == 800)
-        np.testing.assert_allclose(app.fov_crosshair_center(), expected)
+        self.assertEqual(app.fov_crosshair_center(), (400, 300))
+        self.assertEqual(app.detection.guide_center, master)
         app.picking_role = "Secondary edge"
         self.assertIsNone(app.circle_at(app.display_transform.to_display(expected)))
         app.cancel_pick()
@@ -229,7 +234,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(app.fov_crosshair_center(), (400, 300))
         self.assertEqual(app.detection, detection)
         self.assertEqual(app.detection.guide_center, master)
-        # Circle-rim dragging moves the guide group, not the absolute reference.
+        # Circle-rim dragging moves the guide group without moving the FOV reference.
         edge = app.detection.candidate(app.selections["Focuser edge"])
         rim = app.display_transform.to_display((master[0] + edge.radius, master[1]))
         start = SimpleNamespace(x=round(ox + rim[0]), y=round(oy + rim[1]), num=1)
@@ -253,18 +258,24 @@ class GuiTests(unittest.TestCase):
         self.wait_until(lambda: app.last_frame is not None)
         app.fov_checkbox.invoke()
         app.set_fov_crosshair_center((320, 225))
-        expected = app.fov_crosshair_center()
+        self.assertEqual(app.fov_crosshair_center(), (320, 225))
+        app.angle_text["optical"].set("37.25")
+        app.set_crosshair_angle("optical")
+        self.wait_until(lambda: app.display_transform.rotation_deg == 37.25)
+        matrix = app.display_transform.image_matrix()
         app.start_detection()
         self.wait_until(lambda: app.detection is not None)
-        np.testing.assert_allclose(app.fov_crosshair_center(), expected)
+        self.assertEqual(app.fov_crosshair_center(), (320, 225))
         shifted = cv2.warpAffine(optical_fixture(), np.float32([[1, 0, 10], [0, 1, 5]]), (800, 600),
                                  borderValue=(25, 25, 25))
         captures[-1].frame = shifted.copy()
         self.wait_until(lambda: app.detection.guide_center[0] > 408)
-        np.testing.assert_allclose(app.fov_crosshair_center(), expected)
+        np.testing.assert_allclose(app.display_transform.image_matrix(), matrix, atol=1e-8)
+        self.assertEqual(app.fov_crosshair_center(), (320, 225))
         app.start_detection()
         self.wait_until(lambda: app.detection is not None)
-        np.testing.assert_allclose(app.fov_crosshair_center(), expected)
+        self.assertEqual(app.fov_crosshair_center(), (320, 225))
+        expected = (320, 225)
         output = app.export_capture(app.options_store.path.with_name("fov.png"))
         metadata = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
         self.assertTrue(metadata["fov_crosshair"]["visible"])
@@ -283,7 +294,8 @@ class GuiTests(unittest.TestCase):
         app = self.make_app(lambda index: FakeCapture(index, opened=index in available))
         self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
         self.assertFalse(app.camera_on)
-        self.assertEqual(str(app.camera_dropdown.cget("state")), "disabled")
+        self.assertEqual(str(app.camera_dropdown.cget("state")), "readonly")
+        self.assertIn("Stream from the phone", app.camera_dropdown.cget("values"))
         self.assertEqual(app.last_frame, None)
         available.add(2)
         app.refresh_cameras()
@@ -434,12 +446,17 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(app.show_crosshair)
         frame = np.array(ImageTk.getimage(app.video_label.image))[:, :, :3]
         cx, cy = (round(v) for v in app.display_transform.to_display(app.fov_crosshair_center()))
-        expected = np.zeros_like(frame)
-        expected[:, cx] = (255, 0, 0)
-        # The horizontal black halo covers four pixels of the vertical line.
-        expected[cy - 2:cy + 3, cx] = (0, 0, 0)
-        expected[cy, :] = (255, 0, 0)
-        np.testing.assert_array_equal(frame, expected)
+        allowed = np.zeros(frame.shape[:2], dtype=bool)
+        allowed[:, cx - 2:cx + 3] = True
+        allowed[cy - 2:cy + 3, :] = True
+        self.assertFalse(frame[~allowed].any())  # No startup circles or extra reference.
+        outside_center = frame.copy()
+        outside_center[cy - 10:cy + 11, cx - 10:cx + 11] = 0
+        self.assertFalse(outside_center[:, :, 1:].any())
+        self.assertFalse(frame[:, :, 1:].any())
+        self.assertTrue(red_pixels(frame[15:cy - 8, cx]).all())
+        self.assertTrue(red_pixels(frame[cy, 15:cx - 8]).all())
+        self.assertTrue(np.any((frame[:, :, 0] > 0) & (frame[:, :, 0] < 180)))
         self.assertIsNone(app.circle_at((app.crosshair_x + app.ring_controls[0].slider.get(), app.crosshair_y)))
         self.assertTrue(app.shrink_button.instate(["disabled"]))
         app.notebook.select(app.manual_panel)
@@ -448,12 +465,12 @@ class GuiTests(unittest.TestCase):
         self.assertGreater(radii[0], radii[1])
         self.assertGreater(radii[1], radii[2])
         point = (app.crosshair_x, app.crosshair_y + radii[1])
-        self.wait_until(lambda: ImageTk.getimage(app.video_label.image).getpixel(point)[:3] == app.ring_controls[1].color)
+        self.wait_until(lambda: color_matches(ImageTk.getimage(app.video_label.image).getpixel(point)[:3], app.ring_controls[1].color))
         self.assertEqual(app.circle_at(point)["kind"], "guide")
         app.notebook.select(app.review_panel)
         self.root.update()
         self.assertTrue(app.show_crosshair)
-        self.wait_until(lambda: ImageTk.getimage(app.video_label.image).getpixel(point)[:3] == app.ring_controls[1].color)
+        self.wait_until(lambda: color_matches(ImageTk.getimage(app.video_label.image).getpixel(point)[:3], app.ring_controls[1].color))
         style = ttk.Style(self.root)
         self.assertEqual(app.tab_font.actual("weight"), "bold")
         self.assertNotEqual(style.lookup("Collimator.TNotebook.Tab", "background", ("selected",)),
@@ -583,7 +600,7 @@ class GuiTests(unittest.TestCase):
         for ring in app.ring_controls:
             point = (center[0], center[1] + ring.slider.get())
             self.wait_until(lambda r=ring, p=point:
-                            ImageTk.getimage(app.video_label.image).getpixel(p)[:3] == r.color)
+                            color_matches(ImageTk.getimage(app.video_label.image).getpixel(p)[:3], r.color))
             self.assertEqual(app.circle_at(point)["kind"], "guide")
         outer = app.ring_controls[0]
         point = (center[0], center[1] + outer.slider.get())
@@ -631,7 +648,7 @@ class GuiTests(unittest.TestCase):
         self.wait_until(lambda: abs(app.display_transform.to_original((app.crosshair_x, app.crosshair_y))[0] -
                                    app.detection.guide_center[0]) < 1)
         point = (app.crosshair_x, app.crosshair_y + manual_radius)
-        self.wait_until(lambda: ImageTk.getimage(app.video_label.image).getpixel(point)[:3] == app.ring_controls[1].color)
+        self.wait_until(lambda: color_matches(ImageTk.getimage(app.video_label.image).getpixel(point)[:3], app.ring_controls[1].color))
         self.assertEqual(app.circle_at(point)["kind"], "guide")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "new-source.png"
@@ -654,16 +671,16 @@ class GuiTests(unittest.TestCase):
         app.fov_crosshair_visible.set(True)
         inner = app.ring_controls[2]
         point = (app.crosshair_x + inner.slider.get(), app.crosshair_y)
-        self.assertEqual(ImageTk.getimage(app.video_label.image).getpixel(point)[:3], inner.color)
+        np.testing.assert_allclose(ImageTk.getimage(app.video_label.image).getpixel(point)[:3], inner.color, atol=65)
         inner.visible.set(False)
         previous_image = app.video_label.image
         self.wait_until(lambda: app.video_label.image is not previous_image)
-        self.assertEqual(ImageTk.getimage(app.video_label.image).getpixel(point)[:3], (255, 0, 0))
+        self.assertTrue(red_pixels(ImageTk.getimage(app.video_label.image).getpixel(point)[:3]))
 
         app.toggle_crosshair()
         previous_image = app.video_label.image
         self.wait_until(lambda: app.video_label.image is not previous_image)
-        self.assertEqual(ImageTk.getimage(app.video_label.image).getpixel(point)[:3], (255, 0, 0))
+        self.assertTrue(red_pixels(ImageTk.getimage(app.video_label.image).getpixel(point)[:3]))
         app.fov_checkbox.invoke()
         previous_image = app.video_label.image
         self.wait_until(lambda: app.video_label.image is not previous_image)
@@ -711,8 +728,7 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(app.confirmed)
         app.review_role.set("Focuser edge")
         app.review_role_changed()
-        app.candidate_choice.set("Unassigned")
-        app.choose_candidate()
+        app.clear_reference()
         self.assertFalse(app.confirmed)
         self.assertNotIn("Focuser edge", app.selections)
         app.resume_live()
@@ -1012,6 +1028,9 @@ class GuiTests(unittest.TestCase):
         self.wait_until(lambda: app.detection is not None)
         app.review_role.set("Focuser edge")
         app.review_role_changed()
+        # Hide the overlapping FOV handle to target the guide center itself.
+        app.fov_crosshair_visible.set(False)
+        fov_before = app.fov_crosshair_center()
         originals = {edge.id: edge for edge in app.detection.candidates}
         original = app.detection.candidate(app.selections["Focuser edge"])
         app.zoom_factor = 2
@@ -1028,6 +1047,7 @@ class GuiTests(unittest.TestCase):
         moved = app.detection.candidate(original.id)
         np.testing.assert_allclose(moved.center, np.add(original.center, delta), atol=1e-8)
         self.assertEqual(moved.axes, original.axes)
+        self.assertEqual(app.fov_crosshair_center(), fov_before)
         self.assertEqual(moved.provenance, "manual_drag")
         self.assertIsNone(moved.fit_quality)
         self.assertFalse(moved.support_bins)
@@ -1100,15 +1120,27 @@ class GuiTests(unittest.TestCase):
         app.notebook.select(app.review_panel)
         app.start_detection()
         self.wait_until(lambda: app.detection is not None)
+        self.assertNotIn("Focuser edge", app.selections)  # Oval outer rim is not a verified focuser.
+        raw_outer = max((edge for edge in app.detection.observations if edge.kind == "boundary"), key=lambda edge: edge.radius)
+        app.role_buttons["Focuser edge"].invoke()
+        app.pick_button.invoke()
+        for point in raw_outer.points(3):
+            app.pick_review_point(tuple(point))
         center = app.detection.guide_center
+        self.assertEqual(app.detection.guide_master_id, app.selections["Focuser edge"])
         for role in ("Focuser edge", "Secondary edge", "Primary reflection"):
             app.role_buttons[role].invoke()
-            app.toggle_alternatives()
-            app.cycle_candidate(1)
+            original = app.detection.candidate(app.selections[role])
+            app.radius_entry.focus_force()
+            self.root.update()
+            app.radius_text.set(str(round(original.radius) - 3))
+            app.radius_entry.event_generate("<Return>")
+            self.root.update()
             guide = app.detection.candidate(app.selections[role])
             self.assertEqual(guide.axes[0], guide.axes[1])
             self.assertEqual(guide.center, center)
-            app.close_alternatives()
+            self.assertEqual(guide.radius, round(original.radius) - 3)
+            self.assertIn(role, app.manual_references)
         self.assertTrue(all(edge.center == center for edge in app.detection.candidates))
         app.start_detection()
         self.wait_until(lambda: app.detection is not None)
@@ -1118,6 +1150,10 @@ class GuiTests(unittest.TestCase):
     def test_named_outlines_hide_extra_hypotheses_and_guidance_advances(self):
         app = self.make_app(lambda index: FakeCapture(index, opened=False))
         self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
+        app.role_buttons["Center mark"].invoke()
+        self.assertIn("Pick center", app.selection_status.get())
+        app.role_buttons["Focuser edge"].invoke()
+        self.assertIn("Pick edge", app.selection_status.get())
         app.last_frame = optical_fixture()
         app.notebook.select(app.review_panel)
         app.start_detection()
@@ -1132,27 +1168,30 @@ class GuiTests(unittest.TestCase):
         self.wait_until(lambda: app.video_label.image is not previous)
         np.testing.assert_array_equal(np.array(ImageTk.getimage(app.video_label.image)), normal)
         self.assertFalse(app.show_candidates.get())
-        self.assertFalse(app.alternative_panel.winfo_ismapped())
+        self.assertFalse(hasattr(app, "alternative_button"))
+        self.assertFalse(hasattr(app, "alternative_panel"))
         self.assertIn("3 / 4 required circles present", app.review_progress.get())
         self.assertTrue(app.next_step.get())
         self.assertFalse(hasattr(app, "confirm_button"))
-        app.toggle_alternatives()
-        self.root.update()
-        self.assertTrue(app.alternative_panel.winfo_ismapped())
-        app.candidate_choice.set(next(label for label, value in app.candidate_labels.items() if value == 20))
-        app.choose_candidate()
+        app.role_buttons["Focuser edge"].invoke()
+        app.pick_button.invoke()
+        for point in ((255, 150), (220, 185), (185, 150)):
+            app.pick_review_point(point)
+        replacement_id = app.selections["Focuser edge"]
+        self.assertGreater(replacement_id, 20)
+        self.assertEqual(app.detection.candidate(replacement_id).radius, 35)
+        self.assertEqual(len(set(app.selections.values())), len(app.selections))
         self.assertEqual(len(app.selections), 4)
-        self.assertEqual(app.selections["Focuser edge"], 20)
-        self.assertEqual(app.detection.guide_master_id, 20)
+        self.assertEqual(app.detection.guide_master_id, replacement_id)
         self.assertEqual(app.detection.guide_center, (220, 150))
         self.assertTrue(all(edge.center == (220, 150) for edge in app.detection.candidates))
         app.clear_reference()
         self.assertNotIn("Focuser edge", app.manual_references)
-        self.assertNotEqual(app.detection.guide_master_id, 20)
+        self.assertNotEqual(app.detection.guide_master_id, replacement_id)
         self.assertFalse(app.show_candidates.get())
         app.start_detection()
         self.wait_until(lambda: app.detection is not None)
-        self.assertFalse(app.alternatives_open)
+        self.assertFalse(hasattr(app, "alternative_button"))
         self.assertIn("3 / 4 required circles present", app.review_progress.get())
         self.assertNotIn("confirm", app.next_step.get().lower())
         self.assertEqual(app.alignment.stage, "capture")
@@ -1612,7 +1651,7 @@ class GuiTests(unittest.TestCase):
             app.review_role_changed()
             self.assertTrue(app.selection_status.get())
 
-    def test_central_guide_crosshair_is_thicker_and_above_fov_when_they_overlap(self):
+    def test_white_guide_center_is_thicker_and_independent_of_fov_visibility(self):
         app = self.make_app(lambda index: FakeCapture(index, opened=False))
         self.wait_until(lambda: "No cameras found" in app.loading_label.cget("text"))
         app.last_frame = optical_fixture()
@@ -1626,21 +1665,113 @@ class GuiTests(unittest.TestCase):
             return np.array(ImageTk.getimage(app.video_label.image))[:, :, :3]
 
         x, y = (round(v) for v in app.display_transform.to_display(center))
-        self.wait_until(lambda: tuple(pixels()[y + 3, x + 1]) == (255, 255, 255)
-                        and tuple(pixels()[y + 25, x]) == (255, 0, 0))
+        self.wait_until(lambda: np.all(pixels()[y + 3, x + 1] >= 180)
+                        and red_pixels(pixels()[y + 24:y + 27, x - 1:x + 2]).any())
         rendered = pixels()
         for dx in (-1, 0, 1):
-            self.assertEqual(tuple(rendered[y + 3, x + dx]), (255, 255, 255))
-        self.assertEqual(tuple(rendered[y + 25, x]), (255, 0, 0))
+            self.assertTrue(np.all(rendered[y + 3, x + dx] >= 180))
+            self.assertEqual(int(np.ptp(rendered[y + 3, x + dx])), 0)
+        self.assertTrue(red_pixels(tuple(rendered[y + 25, x])))
         detection = app.detection
         app.begin_blink()
         self.wait_until(lambda: tuple(pixels()[y + 3, x]) != (255, 255, 255))
         app.end_blink()
-        self.wait_until(lambda: tuple(pixels()[y + 3, x + 1]) == (255, 255, 255))
+        self.wait_until(lambda: np.all(pixels()[y + 3, x + 1] >= 180))
         self.assertEqual(app.detection, detection)
         app.fov_crosshair_visible.set(False)
-        self.wait_until(lambda: tuple(pixels()[y + 25, x]) != (255, 0, 0))
-        self.assertEqual(tuple(pixels()[y + 3, x + 1]), (255, 255, 255))
+        self.wait_until(lambda: not red_pixels(pixels()[y + 25, x]))
+        self.assertTrue(np.all(pixels()[y + 3, x + 1] >= 180))
+
+    def test_radius_horizontal_drag_tracks_pixels_and_cancels_safely(self):
+        def factory(index):
+            cap = FakeCapture(index, opened=index == 0)
+            cap.frame = optical_fixture()
+            return cap
+        app = self.make_app(factory, live_tracking=True)
+        self.wait_until(lambda: app.camera_on and app.last_frame is not None)
+        app.start_detection()
+        self.wait_until(lambda: app.detection is not None and not app.analysis_busy)
+        app.track_live.set(False)
+        app.tracking_changed()
+        app.notebook.select(app.review_panel)
+        app.select_review_role("Secondary edge")
+        app.zoom_factor = 2
+        app.angle_text["optical"].set("37.25")
+        app.set_crosshair_angle("optical")
+        self.wait_until(lambda: app.display_transform is not None and app.display_transform.rotation_deg == 37.25)
+        entry = app.radius_entry
+        def mouse(kind, x, state=0):
+            if kind == "<ButtonPress-1>":
+                entry.focus_force()
+                self.root.update()
+            entry.event_generate(kind, x=5, y=5, rootx=x, rooty=100, state=state)
+            self.root.update()
+        def radius():
+            return app.detection.candidate(app.selections["Secondary edge"]).radius
+        original = app.detection
+        center = original.guide_center
+        start = round(radius())
+        app.track_live.set(True)
+        app.tracking_changed()
+        mouse("<ButtonPress-1>", 100)
+        self.assertTrue(app.radius_editing)
+        self.assertTrue(app.view_frozen)
+        snapshot = app.last_frame.copy()
+        mouse("<B1-Motion>", 110, 0x100)
+        self.assertEqual(radius(), start + 10)
+        mouse("<B1-Motion>", 115, 0x101)
+        mouse("<B1-Motion>", 120, 0x101)
+        self.assertEqual(radius(), start + 11)
+        self.assertEqual(app.detection.guide_center, center)
+        for edge in original.candidates:
+            if edge.id != app.selections["Secondary edge"]:
+                self.assertEqual(app.detection.candidate(edge.id).axes, edge.axes)
+        np.testing.assert_array_equal(app.last_frame, snapshot)
+        mouse("<ButtonRelease-1>", 120)
+        self.assertFalse(app.radius_editing)
+        self.assertFalse(app.view_frozen)
+        self.assertIsNone(entry.anchor)
+        self.assertTrue(app.camera_on)
+        app.track_live.set(False)
+        app.tracking_changed()
+        mouse("<ButtonPress-1>", 100)
+        mouse("<B1-Motion>", -10000, 0x100)
+        self.assertEqual(radius(), 2)
+        mouse("<B1-Motion>", -9999, 0x100)
+        self.assertEqual(radius(), 3)  # No sticky overshoot at the lower bound.
+        mouse("<ButtonRelease-1>", -9999)
+        for invalid in ("nan", "", "137.5", "-1", "99999"):
+            before = app.detection
+            app.radius_text.set(invalid)
+            mouse("<ButtonPress-1>", 100)
+            mouse("<B1-Motion>", 115, 0x100)
+            self.assertEqual(app.detection, before)
+            entry.event_generate("<Escape>")
+            self.root.update()
+            self.assertFalse(app.radius_editing)
+            self.assertIsNone(entry.anchor)
+        mouse("<ButtonPress-1>", 100)
+        mouse("<B1-Motion>", 104, 0x100)
+        entry.event_generate("<Escape>")
+        self.root.update()
+        fixed = app.detection
+        mouse("<B1-Motion>", 115, 0x100)
+        self.assertEqual(app.detection, fixed)
+        mouse("<ButtonRelease-1>", 115)
+        self.assertFalse(app.radius_editing)
+        # Changing source must cancel the old drag and leave new-source advice intact.
+        mouse("<ButtonPress-1>", 100)
+        mouse("<B1-Motion>", 104, 0x100)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "replacement.png"
+            cv2.imwrite(str(path), optical_fixture())
+            app.load_image(path)
+        advice = app.review_status.get()
+        mouse("<B1-Motion>", 120, 0x100)
+        mouse("<ButtonRelease-1>", 120)
+        self.assertIsNone(app.detection)
+        self.assertEqual(app.review_status.get(), advice)
+        self.assertIsNone(entry.anchor)
 
 
 if __name__ == "__main__":

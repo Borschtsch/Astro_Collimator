@@ -17,6 +17,10 @@ import zipfile
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 
+from source.bootstrap import ensure_windows_environment
+
+ensure_windows_environment()
+
 
 def check_launch(executable, arguments, report, settings_directory):
     subprocess.run([str(executable), *arguments, "--smoke-test", "--report", str(report)],
@@ -28,7 +32,7 @@ def check_launch(executable, arguments, report, settings_directory):
 
 def copy_notices(destination):
     destination.mkdir(parents=True, exist_ok=True)
-    for package in ("opencv-python", "Pillow", "numpy", "pyinstaller"):
+    for package in ("opencv-python", "Pillow", "numpy", "pyinstaller", "qrcode", "cryptography", "pillow-heif", "cffi", "pycparser"):
         distribution = importlib.metadata.distribution(package)
         for file in distribution.files or ():
             if any(word in file.name.lower() for word in ("license", "copying", "notice")):
@@ -75,7 +79,7 @@ def check_archive(archive, work):
         else:
             with tarfile.open(archive, "r:gz") as packaged:
                 packaged.extractall(extracted, filter="data")
-        bundle = extracted / "AstroCollimator"
+        bundle = extracted / "AdvancedAstroCollimator"
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
         environment.pop("PYTHONHOME", None)
@@ -90,7 +94,7 @@ def check_archive(archive, work):
 
 
 def executable_name():
-    return "AstroCollimator.exe" if sys.platform == "win32" else "AstroCollimator"
+    return "AdvancedAstroCollimator.exe" if sys.platform == "win32" else "AdvancedAstroCollimator"
 
 
 def release_target():
@@ -110,10 +114,10 @@ def windows_version_file(work, version_string):
     version = tuple(int(part) for part in version_string.split(".")) + (0,)
     resource = VSVersionInfo(ffi=FixedFileInfo(filevers=version, prodvers=version, fileType=1), kids=[
         StringFileInfo([StringTable("040904B0", [
-            StringStruct("ProductName", "Astro Collimator"),
+            StringStruct("ProductName", "Advanced Astro Collimator"),
             StringStruct("FileDescription", "Newtonian telescope collimation assistant"),
             StringStruct("FileVersion", version_string), StringStruct("ProductVersion", version_string),
-            StringStruct("OriginalFilename", "AstroCollimator.exe"),
+            StringStruct("OriginalFilename", "AdvancedAstroCollimator.exe"),
         ])]), VarFileInfo([VarStruct("Translation", [1033, 1200])]),
     ])
     path = work / "windows-version.txt"
@@ -123,7 +127,7 @@ def windows_version_file(work, version_string):
 
 def main(argv=None):
     target = release_target()
-    parser = argparse.ArgumentParser(description="Build and verify a native Astro Collimator release.")
+    parser = argparse.ArgumentParser(description="Build and verify a native Advanced Astro Collimator release.")
     parser.add_argument("--output-dir", type=Path, default=PROJECT / "dist" / target,
                         help="Release directory (existing application folders are never overwritten).")
     args = parser.parse_args(argv)
@@ -135,26 +139,28 @@ def main(argv=None):
     work = PROJECT / "build" / target
     work.mkdir(parents=True, exist_ok=True)
     release_root = args.output_dir.resolve()
-    bundle = release_root / "AstroCollimator"
+    bundle = release_root / "AdvancedAstroCollimator"
     if bundle.exists():
         # Never overwrite a user's portable settings/captures on a repeat build.
         raise SystemExit(f"Release folder already exists: {bundle}. Move it aside before rebuilding.")
     check_launch(Path(sys.executable), [str(PROJECT / "start.py")], work / "source-check.json", PROJECT)
-    arguments = [str(PROJECT / "start.py"), "--name", "AstroCollimator", "--onedir",
+    arguments = [str(PROJECT / "start.py"), "--name", "AdvancedAstroCollimator", "--onedir",
                  "--noupx", "--noconfirm", "--distpath", str(release_root),
                  "--workpath", str(work / "pyinstaller"), "--specpath", str(work),
-                 "--exclude-module", "tests", "--exclude-module", "pytest"]
+                 "--exclude-module", "tests", "--exclude-module", "pytest",
+                 "--add-data", f"{PROJECT / 'source' / 'web'}:source/web",
+                 "--collect-all", "pillow_heif"]
     if sys.platform == "win32":
         arguments += ["--windowed", "--version-file", str(windows_version_file(work, __version__))]
     run(arguments)
     docs = bundle / "docs"
     docs.mkdir()
-    for name in ("GETTING_STARTED.md", "USER_GUIDE.md", "PLATFORM_SUPPORT.md"):
+    for name in ("GETTING_STARTED.md", "USER_GUIDE.md", "PLATFORM_SUPPORT.md", "PHONE_CAPTURE.md"):
         shutil.copyfile(PROJECT / "docs" / name, docs / name)
     copy_notices(bundle / "third-party-notices")
-    launch = "Open AstroCollimator.exe." if sys.platform == "win32" else "Run ./AstroCollimator from a desktop session."
+    launch = "Open AdvancedAstroCollimator.exe." if sys.platform == "win32" else "Run ./AdvancedAstroCollimator from a desktop session."
     (bundle / "START_HERE.txt").write_bytes((
-        "Astro Collimator\nNewtonian collimation assistance\n\n"
+        "Advanced Astro Collimator\nNewtonian collimation assistance\n\n"
         "1. Extract this entire folder to a writable location.\n"
         f"2. {launch} Python is not required.\n"
         "3. Set up your telescope, then select a camera or open a focuser-view image.\n\n"
@@ -163,15 +169,17 @@ def main(argv=None):
         "See docs/GETTING_STARTED.md for OS dependencies and docs/USER_GUIDE.md for controls.\n"
     ).encode("utf-8"))
     versions = {name: importlib.metadata.version(name)
-                for name in ("pyinstaller", "opencv-python", "Pillow", "numpy")}
+                for name in ("pyinstaller", "opencv-python", "Pillow", "numpy", "qrcode", "cryptography", "pillow-heif")}
     (bundle / "build-info.json").write_bytes((json.dumps({"app_version": __version__,
         "python": sys.version.split()[0], "platform": sys.platform, "target": target,
         "build_host": platform.platform(), "libc": platform.libc_ver(), "dependencies": versions}, indent=2) + "\n").encode("utf-8"))
     check_launch(bundle / executable_name(), [], work / "portable-check.json", bundle)
+    if (bundle / "phone-link").exists():
+        raise RuntimeError("Local phone certificates and private keys must not be included in the release.")
     if (bundle / "options.json").exists():
         raise RuntimeError("A personal settings file must not be included in the release.")
     extension = ".zip" if sys.platform == "win32" else ".tar.gz"
-    archive = release_root / f"AstroCollimator-{__version__}-{target}{extension}"
+    archive = release_root / f"AdvancedAstroCollimator-{__version__}-{target}{extension}"
     if sys.platform == "win32":
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
             for path in sorted(bundle.rglob("*")):

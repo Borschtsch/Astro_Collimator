@@ -323,7 +323,7 @@ class WorkflowTests(GuiTests):
             app = self.make_app(None, native_camera=True)
             try:
                 self.wait_until(lambda: app.last_frame is not None)
-                self.assertEqual(app.camera_list, ["Camera 2", "Camera 14"])
+                self.assertEqual(app.camera_list, ["Astro Camera (Camera 2)", "Astro Camera (Camera 14)"])
                 gain = app.camera_controls[cv2.CAP_PROP_GAIN]
                 self.assertEqual((gain.slider.cget("from"), gain.slider.cget("to")), (3, 19))
                 self.assertEqual(gain.slider.get(), 7)
@@ -336,7 +336,7 @@ class WorkflowTests(GuiTests):
                 gain.slider.event_generate("<Button-4>")
                 self.wait_until(lambda: len(hardware.captures[-1].set_calls) == 2)
                 self.assertEqual(hardware.captures[-1].set_calls[-1], (cv2.CAP_PROP_GAIN, 11))
-                app.selected_camera.set("Camera 14")
+                app.selected_camera.set("Astro Camera (Camera 14)")
                 app.camera_dropdown.event_generate("<<ComboboxSelected>>")
                 self.wait_until(lambda: app.camera_controls[cv2.CAP_PROP_GAIN].info.status == "unknown" and app.last_frame is not None)
                 self.assertTrue(gain.enabled)  # malformed driver range keeps numeric fallback
@@ -392,12 +392,109 @@ class WorkflowTests(GuiTests):
             self.assertEqual(completed.returncode, 1)
             self.assertIn("could not start", completed.stderr)
             self.assertIn("Install the application dependencies", completed.stderr)
+            for dependency in ("numpy", "opencv-python", "Pillow", "qrcode", "cryptography", "pillow-heif"):
+                self.assertIn(dependency, completed.stderr)
+            self.assertIn("Required runtime checks failed", completed.stderr)
             log = checkout / "build" / "startup-error.log"
             self.assertTrue(log.is_file())
             self.assertIn("ModuleNotFoundError", log.read_text(encoding="utf-8"))
             self.assertIn("Interpreter: " + str(interpreter), log.read_text(encoding="utf-8"))
             self.assertIn("Interpreter: " + str(interpreter), completed.stderr)
             self.assertFalse((checkout / "options.json").exists())
+
+    def test_source_launcher_rejects_missing_phone_packages_and_broken_native_codec_then_recovers(self):
+        from tests.fixtures.source_checkout import source_checkout, launch_directory, copy_runtime_packages
+        with launch_directory() as folder:
+            checkout, interpreter = source_checkout(folder, dependencies=False)
+            copy_runtime_packages(interpreter, ("numpy", "cv2", "PIL"))
+            report = Path(folder) / "dependencies.json"
+            command = [str(interpreter), "-B", str(checkout / "start.py"),
+                       "--smoke-test", "--report", str(report)]
+            environment = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+            missing = subprocess.run(command, cwd=folder, capture_output=True, text=True,
+                                     encoding="utf-8", env=environment, timeout=30)
+            self.assertEqual(missing.returncode, 1, missing.stderr)
+            for dependency in ("qrcode", "cryptography / HTTPS", "pillow-heif"):
+                self.assertIn(dependency + ": ModuleNotFoundError", missing.stderr)
+            self.assertNotIn("opencv-python:", missing.stderr)
+            self.assertFalse(report.exists())
+            self.assertFalse((checkout / "options.json").exists())
+            packages = copy_runtime_packages(interpreter,
+                ("qrcode", "cryptography", "pillow_heif", "_pillow_heif", "_cffi_backend", "cffi", "pycparser"))
+            # Remove only this isolated installation's actual binary extension.
+            binaries = list(packages.glob("_pillow_heif*.pyd")) + list(packages.glob("_pillow_heif*.so"))
+            self.assertTrue(binaries)
+            binary = binaries[0]
+            disabled = binary.with_name(binary.name + ".disabled")
+            binary.rename(disabled)
+            broken = subprocess.run(command, cwd=folder, capture_output=True, text=True,
+                                    encoding="utf-8", env=environment, timeout=30)
+            self.assertEqual(broken.returncode, 1, broken.stderr)
+            self.assertIn("pillow-heif:", broken.stderr)
+            self.assertNotIn("qrcode:", broken.stderr)
+            self.assertNotIn("cryptography / HTTPS:", broken.stderr)
+            self.assertIn("Interpreter: " + str(interpreter), broken.stderr)
+            self.assertFalse(report.exists())
+            self.assertFalse((checkout / "phone-link").exists())
+            disabled.rename(binary)
+            repaired = subprocess.run(command, cwd=folder, capture_output=True, text=True,
+                                      encoding="utf-8", env=environment, timeout=45)
+            self.assertEqual(repaired.returncode, 0, repaired.stderr)
+            result = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "passed")
+            self.assertIn("matched raw PNG and JSON export", result["checks"])
+            self.assertFalse((checkout / "options.json").exists())
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows process paths")
+    def test_source_startup_repairs_windows_paths_without_literal_cache_folders(self):
+        from tests.fixtures.source_checkout import source_checkout, launch_directory
+        names = ("SystemDrive", "SystemRoot", "WINDIR", "ProgramData", "ALLUSERSPROFILE")
+        project = Path(__file__).resolve().parents[2]
+        with launch_directory() as folder:
+            checkout, interpreter = source_checkout(folder)
+            environment = dict(os.environ)
+            for key in list(environment):
+                if key.lower() in {name.lower() for name in names}:
+                    environment.pop(key)
+            environment["ProgramData"] = "%SystemDrive%/ProgramData"
+            environment["WINDIR"] = "%SystemDrive%/Windows"
+            driver = (
+                "import json,os,sys; from pathlib import Path; "
+                "sys.path.insert(0,sys.argv[1]); from source.bootstrap import launch; "
+                "result=launch(['--smoke-test','--report',sys.argv[2]]); "
+                "Path(sys.argv[3]).write_text(json.dumps({k:os.environ.get(k) for k in "
+                "('SystemDrive','SystemRoot','WINDIR','ProgramData','ALLUSERSPROFILE')}),encoding='utf-8'); "
+                "sys.exit(result)"
+            )
+            for case in ("incomplete", "preserved"):
+                with self.subTest(case=case):
+                    report = Path(folder) / (case + ".json")
+                    paths = Path(folder) / (case + "-paths.json")
+                    if case == "preserved":
+                        shared = Path(folder) / "Caller data"
+                        shared.mkdir()
+                        environment.update(resolved)
+                        environment["ProgramData"] = str(shared)
+                        environment["ALLUSERSPROFILE"] = str(shared)
+                    child = subprocess.run(
+                        [str(interpreter), "-B", "-c", driver, str(checkout), str(report), str(paths)],
+                        cwd=folder, env=environment, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+                    result = json.loads(report.read_text(encoding="utf-8"))
+                    self.assertEqual(result["status"], "passed")
+                    self.assertIn("Tk rendering", result["checks"])
+                    self.assertIn("matched raw PNG and JSON export", result["checks"])
+                    resolved = json.loads(paths.read_text(encoding="utf-8"))
+                    self.assertEqual(len(resolved["SystemDrive"]), 2)
+                    self.assertTrue(resolved["SystemDrive"].endswith(":"))
+                    for name in names[1:]:
+                        self.assertTrue(Path(resolved[name]).is_absolute(), resolved)
+                        self.assertNotIn("%", resolved[name])
+                    if case == "preserved":
+                        self.assertEqual(resolved["ProgramData"], str(shared))
+                        self.assertEqual(resolved["ALLUSERSPROFILE"], str(shared))
+                    self.assertFalse(list(Path(folder).rglob("%SystemDrive%")))
+                    self.assertFalse((project / "%SystemDrive%").exists())
 
     @unittest.skipUnless(sys.platform == "win32", "Windows Explorer file association")
     def test_explorer_uses_associated_python_without_switching_to_local_venv(self):
@@ -631,3 +728,66 @@ class WorkflowTests(GuiTests):
             self.assertEqual(events[-1]["after"]["radii"], events[-1]["before"]["radii"])
             output = app.export_capture(Path(directory) / "zoomed.png")
             np.testing.assert_array_equal(cv2.imdecode(np.frombuffer(output.read_bytes(), np.uint8), 1), frame)
+
+    def test_named_camera_selection_refresh_fallback_and_detection_label(self):
+        import threading
+        from tests.fixtures.linux_camera import LinuxCameraHardware
+        with LinuxCameraHardware() as hardware:
+            app = self.make_app(None, native_camera=True)
+            self.wait_until(lambda: app.camera_on and app.last_frame is not None)
+            self.assertEqual(app.detect_button.cget("text"), "Detect edges and align image")
+            self.assertEqual(app.camera_devices, {"Astro Camera (Camera 2)": 2, "Astro Camera (Camera 14)": 14})
+            app.selected_camera.set("Astro Camera (Camera 14)")
+            app.camera_dropdown.event_generate("<<ComboboxSelected>>")
+            self.wait_until(lambda: app.camera_on and app.last_frame is not None and hardware.captures[-1].index == 14)
+            self.assertEqual(app.source_description, "Astro Camera (Camera 14)")
+            hardware.names[14] = "  ZWO ASI 174 MM  "
+            session = app.session
+            app.refresh_button.invoke()
+            self.wait_until(lambda: app.session > session + 1 and app.camera_on and app.last_frame is not None)
+            self.assertEqual(app.selected_camera.get(), "ZWO ASI 174 MM (Camera 14)")
+            self.assertEqual(hardware.captures[-1].index, 14)
+            hardware.names.clear()
+            session = app.session
+            app.refresh_button.invoke()
+            self.wait_until(lambda: app.session > session + 1 and app.camera_on and app.last_frame is not None)
+            self.assertEqual(app.camera_list, ["Camera 2", "Camera 14"])
+            self.assertEqual(app.selected_camera.get(), "Camera 14")
+            self.assertTrue(all(owner != threading.get_ident() for _, owner in hardware.name_reads))
+            for size in ("1280x720", "1024x768"):
+                self.root.geometry(size)
+                app.notebook.select(app.review_panel)
+                self.root.update()
+                self.assertLessEqual(app.detect_button.winfo_rootx() + app.detect_button.winfo_reqwidth(),
+                                     app.review_panel.winfo_rootx() + app.review_panel.winfo_width())
+            self.open_detect_export(pupil_fixture())
+            app.resume_live()
+            self.wait_until(lambda: app.camera_on and app.last_frame is not None)
+            self.assertEqual(app.selected_camera.get(), "Camera 14")
+            self.assertEqual(hardware.captures[-1].index, 14)
+
+    @unittest.skipUnless(sys.platform == "win32", "Native DirectShow name API requires Windows")
+    def test_windows_native_camera_names_scan_stream_and_refresh(self):
+        from source.camera_properties import query_camera_names
+        captures = []
+        expected = query_camera_names(list(range(10)))
+
+        def factory(index):
+            cap = FakeCapture(index, opened=index in (0, 1))
+            captures.append(cap)
+            return cap
+
+        app = self.make_app(factory, native_names=True)
+        self.wait_until(lambda: app.camera_on and app.last_frame is not None)
+        for label, index in app.camera_devices.items():
+            name = " ".join(expected.get(index, "").split())
+            self.assertEqual(label, f"{name} (Camera {index})" if name else f"Camera {index}")
+        self.assertEqual(app.camera_devices[app.selected_camera.get()], 0)
+        app.camera_dropdown.current(1)
+        app.camera_dropdown.event_generate("<<ComboboxSelected>>")
+        self.wait_until(lambda: app.camera_on and app.last_frame is not None and captures[-1].index == 1)
+        session = app.session
+        app.refresh_button.invoke()
+        self.wait_until(lambda: app.session > session + 1 and app.camera_on and app.last_frame is not None)
+        self.assertEqual(app.camera_devices[app.selected_camera.get()], 1)
+        self.assertEqual(captures[-1].index, 1)

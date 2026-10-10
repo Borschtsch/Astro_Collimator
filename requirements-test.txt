@@ -1,0 +1,2 @@
+# Browser workflow tooling only; not an application runtime dependency.
+playwright==1.63.0

@@ -57,3 +57,13 @@ def query_camera_properties(index):
     finally:
         os.close(descriptor)
     return results
+
+
+def query_camera_names(indices):
+    names = {}
+    for index in indices:
+        try:
+            names[index] = Path(f"/sys/class/video4linux/video{index}/name").read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            continue
+    return names

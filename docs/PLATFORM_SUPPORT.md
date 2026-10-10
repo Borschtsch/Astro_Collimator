@@ -113,3 +113,15 @@ See PLATFORM_VALIDATION.json for the archive checksum and smoke evidence.
 Linux: implementation and three boundary-based integration workflows are ready;
 native desktop, camera and Linux release checks have not run. They require the
 actual graphical Linux VM. No unit tests or Git operations were performed.
+
+## Phone source — 2026-10-10
+
+The optional receiver uses shared Python HTTP/TLS, Pillow/HEIC and Tk code on
+Windows and Linux. Mobile assets and dependencies are included by the native
+release builder. Windows loopback HTTP/HTTPS, QR, browser photo/video and the
+production desktop workflows are validated through integration tests. Actual
+Linux desktop/phone networking and new native portable releases remain pending.
+Leave personal phone-link/ certificates and keys out of VM copies and releases;
+each installation generates its own identity. Actual Android/iPhone camera and
+certificate trust prompts, LAN adapters, firewalls and isolated Wi-Fi also need
+device validation. See PHONE_CAPTURE.md.

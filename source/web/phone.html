@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phone camera · Advanced Astro Collimator</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#101824;color:#eef3fa}body{max-width:34rem;margin:auto;padding:1.2rem}h1{font-size:1.5rem;margin-bottom:.3rem}p{line-height:1.5;color:#c8d3e2}button,.button{display:inline-block;background:#275c94;color:white;border:0;border-radius:.5rem;padding:.85rem 1rem;font:inherit;margin:.3rem .25rem .3rem 0;cursor:pointer}button:disabled{opacity:.5}.secondary{background:#344256}input[type=file]{display:none}#zoom-controls{padding:.8rem;background:#1c2a3d;border-radius:.5rem;margin-bottom:.8rem}#zoom{width:100%;margin:.6rem 0}#zoom-note{display:block;color:#c8d3e2;font-size:.9rem}video{width:100%;max-height:55vh;background:black;border-radius:.5rem;margin:1rem 0}#status{min-height:3rem;padding:.8rem;background:#1c2a3d;border-radius:.5rem}details{margin-top:1.2rem}code{display:block;overflow-wrap:anywhere;font-size:.8rem;margin:.5rem 0 1rem}a{color:#9bc9ff}progress{width:100%}[hidden]{display:none!important}
+</style><script src="phone.js" defer></script></head>
+<body><p>Advanced Astro Collimator</p><h1>Phone camera</h1>
+<p>Keep your phone and computer on the same Wi-Fi or hotspot. No internet connection is needed.</p>
+<button id="open">Open camera</button><button id="photo" disabled>Take photo</button>
+<label class="button secondary" for="choose">Choose photo</label><input id="choose" type="file" accept="image/*">
+<div><button id="start">Send video</button><button id="stop" class="secondary" disabled>Stop video</button></div>
+<video id="preview" autoplay muted playsinline hidden></video>
+<div id="zoom-controls" hidden><label for="zoom">Camera zoom</label> <output id="zoom-value" for="zoom"></output>
+<input id="zoom" type="range" disabled aria-describedby="zoom-note"><small id="zoom-note">Checking camera zoom…</small></div>
+<progress id="progress" max="100" value="0" hidden></progress>
+<p id="status" role="status" aria-live="polite">Open the browser camera to take a photo or send video. You can also choose an existing photo.</p>
+<p id="secure-note">Browser photos and video need HTTPS and camera permission. Choose photo can send an existing file without camera access.</p>
+<details><summary>Connection and certificate details</summary>
+<p>Certificates are generated on your computer. Nothing is installed automatically. If your browser accepts the local HTTPS connection, try video without installation. Some phones require a trusted certificate for camera access.</p>
+<p>Before optionally trusting a certificate, open <strong>Compare certificates</strong> in the computer's Camera tab. Match all SHA-256 digits. A matching number on this page alone is not proof: also check the certificate details shown by your browser or phone's installation screen.</p>
+<strong>HTTPS server certificate SHA-256</strong><code id="server-fingerprint">Preparing…</code>
+<strong>Local root certificate SHA-256</strong><code id="ca-fingerprint">Preparing…</code>
+<a id="certificate" href="ca.cer" hidden>Download this computer's public root certificate</a>
+<p><a id="profile" href="phone.mobileconfig" hidden>Optional iPhone/iPad certificate profile</a></p>
+<p>Install only if you choose to trust this computer and your phone needs it. On iPhone, a manually installed root also needs full trust enabled in Settings → General → About → Certificate Trust Settings. Android steps depend on the phone. Remove that trust when you no longer need the connection. Private keys stay on the computer.</p>
+</details></body></html>

@@ -8,10 +8,13 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from time import monotonic
 from PIL import Image, ImageTk
-from .camera_properties import PropertyInfo, query_camera_properties
+from .camera_properties import PropertyInfo, query_camera_properties, query_camera_names
 from .ui_platform import bind_wheel, wheel_direction, window_state, set_window_state
 from .collimation_review import ReviewTools
+from .phone_capture import PhoneTools
+from .phone_server import PHONE_SOURCE
 from .feature_detection import DisplayTransform, draw_detection
+from .spider_vanes import draw_crosshair
 
 
 def open_camera(index):
@@ -42,6 +45,7 @@ class CameraWorker(Thread):
         self.capture_factory = capture_factory or open_camera
         self.capability_provider = capability_provider or (
             query_camera_properties if capture_factory is None else lambda index: {})
+        self.name_provider = query_camera_names if capture_factory is None else lambda indices: {}
         self.capabilities = {}
         self.max_cameras = max_cameras
         self.index_provider = camera_indices if capture_factory is None else lambda count: range(count)
@@ -67,7 +71,11 @@ class CameraWorker(Thread):
 
         if action == "scan":
             cameras = []
-            indices = self.index_provider(self.max_cameras)
+            indices = list(self.index_provider(self.max_cameras))
+            try:
+                names = self.name_provider(indices)
+            except OSError:
+                names = {}
             for index in indices:
                 if self.stop_event.is_set():
                     return
@@ -75,7 +83,7 @@ class CameraWorker(Thread):
                 try:
                     cap = self.capture_factory(index)
                     if cap.isOpened():
-                        cameras.append(index)
+                        cameras.append((index, names.get(index, "")))
                 except cv2.error:
                     continue
                 finally:
@@ -204,14 +212,15 @@ NEWTONIAN_HELP = (
 )
 
 
-def prepare_frame(frame, zoom, display_width, display_height, center=None):
+def prepare_frame(frame, zoom, display_width, display_height, center=None, rotation_deg=0, rotation_center=None, rotation_shift=(0.0, 0.0)):
     """Crop for zoom/pan, then fit without stretching the camera image."""
     height, width = frame.shape[:2]
-    transform = DisplayTransform.for_image((width, height), zoom, display_width, display_height, center)
-    x, y = transform.crop_x, transform.crop_y
-    cropped = frame[y:y + transform.crop_height, x:x + transform.crop_width]
+    transform = DisplayTransform.for_image((width, height), zoom, display_width, display_height, center, rotation_deg, rotation_center, rotation_shift)
+    # Use one pixel mapping at every angle. Switching between resize's half-pixel
+    # sampling and an affine warp would shift the image at the first rotation.
     size = (transform.width, transform.height)
-    return cv2.cvtColor(cv2.resize(cropped, size), cv2.COLOR_BGR2RGB)
+    resized = cv2.warpAffine(frame, transform.image_matrix(), size)
+    return cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
 
 
 class CameraControl(tk.Frame):
@@ -333,6 +342,7 @@ class RingControl(tk.Frame):
     def __init__(self, root, color, radius):
         super().__init__(root)
         self.color = color
+        self.viewport_radius = float(radius)
         self.name = tk.StringVar(value="")
         self.visible = tk.BooleanVar(value=True)
         tk.Frame(self, background="#{:02x}{:02x}{:02x}".format(*color),
@@ -354,6 +364,7 @@ class RingControl(tk.Frame):
 
     def resize(self, direction):
         self.slider.set(self.slider.get() + direction)
+        self.viewport_radius = float(self.slider.get())
         return "break"
 
     def scroll(self, event):
@@ -363,14 +374,14 @@ class RingControl(tk.Frame):
         return "break"
 
 
-class WebcamApp(ReviewTools):
+class WebcamApp(PhoneTools, ReviewTools):
     def __init__(self, root, options_store=None):
         self.root = root
         self.root.geometry(f"{min(1300, root.winfo_screenwidth())}x{min(750, root.winfo_screenheight())}")
         self.fullscreen = False
         self.root.attributes("-fullscreen", False)
         self.windowed_state = "zoomed"
-        self.root.title("Astro Collimator")
+        self.root.title("Advanced Astro Collimator")
         self.session = 0
         self.closing = False
         self.camera_on = False
@@ -388,9 +399,10 @@ class WebcamApp(ReviewTools):
         row_index += 1
 
         self.camera_list = []
+        self.camera_devices = {}
         self.selected_camera = tk.StringVar(value="")
         self.camera_dropdown = ttk.Combobox(self.camera_panel, textvariable=self.selected_camera, values=self.camera_list,
-                                            state="readonly")
+                                            state="readonly", width=32)
         self.camera_dropdown.grid(row=row_index, column=0, padx=5)
         self.camera_dropdown.bind("<<ComboboxSelected>>", self.on_camera_selected)
         row_index += 1
@@ -409,6 +421,10 @@ class WebcamApp(ReviewTools):
                  wraplength=280).grid(row=row_index, column=0, padx=5)
         row_index += 1
 
+        self.build_phone_controls(3)
+
+        self.image_rotation_center = None
+        self.image_rotation_shift = (0.0, 0.0)
         self.zoom_factor = 1.0
         self.view_center = None
         self.pan_anchor = None
@@ -478,6 +494,7 @@ class WebcamApp(ReviewTools):
         # Video display area
         self.video_label = tk.Label(root, background="black", foreground="white", text="No camera image")
         self.video_label.grid(row=0, column=1, padx=5, sticky="nsew")
+        self.build_phone_view()
         bind_wheel(self.video_label, self.zoom_with_scroll)
         self.video_label.bind("<Motion>", self.hover_image)
         self.video_label.bind("<Leave>", lambda event: self.video_label.config(cursor="") if self.pan_anchor is None else None)
@@ -561,6 +578,14 @@ class WebcamApp(ReviewTools):
                 event.y - (self.video_label.winfo_height() - self.video_height) // 2)
 
     def reset_view(self):
+        self.fov_center_fraction = (0.5, 0.5)
+        self.crosshair_rotation_offset = 0.0
+        self.image_rotation_center = None
+        self.image_rotation_shift = (0.0, 0.0)
+        self.vane_generation += 1  # Pending alignment cannot restore old angles.
+        for name in self.crosshair_angles:
+            self.crosshair_angles[name] = 0.0
+            self.angle_text[name].set("0.00")
         self.zoom_factor = 1.0
         self.view_center = None
         self.pan_anchor = None
@@ -569,6 +594,29 @@ class WebcamApp(ReviewTools):
         self.circle_drag = None
         self.resize_hover_anchor = None
         self.video_label.config(cursor="")
+
+    def viewport_limits(self):
+        return (min(960, max(160, self.root.winfo_width() - self.sidebar.winfo_width() - 14)),
+                min(720, max(120, self.root.winfo_height() - 14)))
+
+    def current_view_transform(self):
+        return DisplayTransform.for_image(
+            (self.last_frame.shape[1], self.last_frame.shape[0]), self.zoom_factor,
+            *self.viewport_limits(), self.view_center, self.crosshair_angles["optical"],
+            self.image_rotation_center, self.image_rotation_shift)
+
+    def apply_image_rotation(self, angle):
+        # Only angle edits change the applied rotation. Moving a guide must not
+        # retroactively rotate/translate image pixels around its new position.
+        if self.last_frame is None or angle == self.crosshair_angles["optical"]:
+            return
+        current = self.current_view_transform()
+        pivot = self.fov_crosshair_center()
+        desired = current.to_display(pivot)
+        rotated = replace(current, rotation_deg=angle, rotation_center=pivot, rotation_shift=(0.0, 0.0))
+        baseline = rotated.to_display(pivot)
+        self.image_rotation_center = pivot
+        self.image_rotation_shift = current.viewport_delta((desired[0] - baseline[0], desired[1] - baseline[1]))
 
     def set_view_center(self, center):
         if self.last_frame is None:
@@ -579,6 +627,8 @@ class WebcamApp(ReviewTools):
                             clamped.crop_y + clamped.crop_height / 2)
 
     def zoom_with_scroll(self, event):
+        if self.phone_connection_visible:
+            return "break"
         direction = wheel_direction(event)
         if not direction or self.last_frame is None or self.display_transform is None:
             return "break"
@@ -622,8 +672,13 @@ class WebcamApp(ReviewTools):
         anchor = transform.to_original((x, y))
         height, width = self.last_frame.shape[:2]
         crop_width, crop_height = max(1, int(width / self.zoom_factor)), max(1, int(height / self.zoom_factor))
-        self.set_view_center((anchor[0] + (0.5 - x / transform.width) * crop_width,
-                              anchor[1] + (0.5 - y / transform.height) * crop_height))
+        next_transform = DisplayTransform.for_image((width, height), self.zoom_factor,
+            transform.width, transform.height, rotation_deg=transform.rotation_deg,
+            rotation_center=transform.pivot, rotation_shift=transform.rotation_shift)
+        projected = next_transform.to_display(anchor)
+        offset = next_transform.viewport_delta((projected[0] - x, projected[1] - y))
+        self.set_view_center((next_transform.crop_x + crop_width / 2 + offset[0],
+                              next_transform.crop_y + crop_height / 2 + offset[1]))
         return "break"
 
     def overlays_shown(self):
@@ -639,6 +694,9 @@ class WebcamApp(ReviewTools):
         return "break"
 
     def hover_image(self, event):
+        if self.phone_connection_visible:
+            self.video_label.config(cursor="")
+            return
         if self.pan_anchor is not None:
             return
         if self.resize_hover_anchor is not None and math.dist(self.image_position(event), self.resize_hover_anchor[:2]) > 12:
@@ -649,7 +707,7 @@ class WebcamApp(ReviewTools):
             self.video_label.config(cursor="fleur" if self.circle_at(self.image_position(event)) else "")
 
     def fov_crosshair_center(self):
-        """Position in full raw-image coordinates, independent of every optical guide."""
+        """The FOV reference is independent of the concentric guide group."""
         if self.last_frame is None:
             return (0, 0)
         height, width = self.last_frame.shape[:2]
@@ -659,26 +717,42 @@ class WebcamApp(ReviewTools):
         if self.last_frame is None:
             return
         height, width = self.last_frame.shape[:2]
-        self.fov_center_fraction = tuple(max(0.0, min(size - 1, value)) / size
-                                        for value, size in zip(center, (width, height)))
+        center = tuple(max(0.0, min(size - 1, value)) for value, size in zip(center, (width, height)))
+        self.fov_center_fraction = tuple(value / size for value, size in zip(center, (width, height)))
 
     def reset_fov_crosshair(self):
         self.fov_center_fraction = (0.5, 0.5)
+        if self.last_frame is not None:
+            height, width = self.last_frame.shape[:2]
+            self.set_fov_crosshair_center((width / 2, height / 2))
+
+    def crosshair_render_angle(self):
+        return (self.crosshair_angles["fov"] + self.crosshair_rotation_offset) % 360
 
     def draw_fov_crosshair(self, frame, transform):
         if not self.fov_crosshair_visible.get() or not self.overlays_shown():
             return
-        x, y = (round(value) for value in transform.to_display(self.fov_crosshair_center()))
-        height, width = frame.shape[:2]
-        # Preserve the startup red crosshair, with a thin contrasting halo.
-        segments = []
-        if 0 <= x < width:
-            segments.append(((x, 0), (x, height - 1)))
-        if 0 <= y < height:
-            segments.append(((0, y), (width - 1, y)))
-        for start, end in segments:
-            cv2.line(frame, start, end, (0, 0, 0), 3)
-            cv2.line(frame, start, end, (255, 0, 0), 1)
+        center = transform.to_display(self.fov_crosshair_center())
+        draw_crosshair(frame, center, self.crosshair_render_angle(), self.crosshair_blades.get(),
+                       color=(255, 0, 0), thickness=1, transform=transform, full_frame=True)
+
+    def draw_guide_center(self, frame, transform):
+        if not self.overlays_shown():
+            return
+        detected = self.visible_detection() if self.detection is not None else None
+        detected_visible = detected is not None and any(
+            edge.id in self.selections.values() or self.show_candidates.get()
+            for edge in detected.candidates)
+        manual_visible = self.show_crosshair and any(
+            ring.visible.get() and ring.name.get() not in self.selections
+            for ring in self.ring_controls)
+        if not detected_visible and not manual_visible:
+            return
+        center = (transform.to_display(self.detection.guide_center)
+                  if self.detection is not None and self.detection.guide_center is not None
+                  else (self.crosshair_x, self.crosshair_y))
+        draw_crosshair(frame, center, self.crosshair_render_angle(),
+                       self.crosshair_blades.get(), thickness=2, transform=transform)
 
     def circle_at(self, point, include_fov=True):
         """Hit visible rims/centers, including the focuser extrapolation."""
@@ -704,11 +778,11 @@ class WebcamApp(ReviewTools):
                 center_distance = math.hypot(point[0] - center[0], point[1] - center[1])
                 if edge.axes[0] == edge.axes[1] and not edge.support_bins:
                     # Continuous geometry keeps the grab margin consistent at high zoom.
-                    dx, dy = point[0] - center[0], point[1] - center[1]
-                    rx = edge.radius * transform.width / transform.crop_width
-                    ry = edge.radius * transform.height / transform.crop_height
-                    angle = math.atan2(dy / ry, dx / rx)
-                    distance = math.hypot(dx - rx * math.cos(angle), dy - ry * math.sin(angle))
+                    raw = transform.to_original(point)
+                    angle = math.atan2(raw[1] - edge.center[1], raw[0] - edge.center[0])
+                    closest = (edge.center[0] + edge.radius * math.cos(angle),
+                               edge.center[1] + edge.radius * math.sin(angle))
+                    distance = math.dist(point, transform.to_display(closest))
                 else:
                     points = edge.points(288)
                     if edge.support_bins and edge.id != self.selections.get("Focuser edge"):
@@ -734,13 +808,15 @@ class WebcamApp(ReviewTools):
         return None
 
     def begin_pan(self, event):
+        if self.phone_connection_visible:
+            return "break"
         self.end_pan()
         transform = self.display_transform
         if self.last_frame is not None and transform is not None:
             x, y = self.image_position(event)
             # The entire black viewport is pan space. Optical hit testing
             # still ignores margins, so dragging there cannot move a guide.
-            if self.source_mode == "camera" and self.camera_on:
+            if self.live_source_active:
                 self.view_frozen = True
                 self.live_average.reset()
                 self.analysis_generation += 1
@@ -766,8 +842,7 @@ class WebcamApp(ReviewTools):
                 if self.circle_drag["token"] != (self.session, self.analysis_generation):
                     self.end_pan()
                     return "break"
-                delta = ((event.x - x) * transform.crop_width / transform.width,
-                         (event.y - y) * transform.crop_height / transform.height)
+                delta = transform.to_original_vector((event.x - x, event.y - y))
                 if self.circle_drag["kind"] == "fov":
                     original = self.circle_drag["center"]
                     self.set_fov_crosshair_center(tuple(original[i] + delta[i] for i in (0, 1)))
@@ -783,10 +858,9 @@ class WebcamApp(ReviewTools):
                         self.set_review_center(center)
                         self.refresh_review_selection()
                 return "break"
-            self.set_view_center((transform.crop_x + transform.crop_width / 2 -
-                                  (event.x - x) * transform.crop_width / transform.width,
-                                  transform.crop_y + transform.crop_height / 2 -
-                                  (event.y - y) * transform.crop_height / transform.height))
+            delta = transform.viewport_delta((event.x - x, event.y - y))
+            self.set_view_center((transform.crop_x + transform.crop_width / 2 - delta[0],
+                                  transform.crop_y + transform.crop_height / 2 - delta[1]))
         return "break"
 
     def set_fullscreen(self, enabled):
@@ -798,7 +872,6 @@ class WebcamApp(ReviewTools):
         self.root.attributes("-fullscreen", self.fullscreen)
         if was_fullscreen and not enabled:
             set_window_state(self.root, self.windowed_state)
-        self.fullscreen_button.config(text="Windowed" if self.fullscreen else "Fullscreen")
         return "break"
 
     def toggle_fullscreen(self, event=None):
@@ -820,7 +893,7 @@ class WebcamApp(ReviewTools):
         self.circle_drag = None
         self.resize_hover_anchor = None
         self.video_label.config(cursor="")
-        if self.source_mode == "camera" and self.camera_on and self.picking_role is None and not self.radius_editing:
+        if self.live_source_active and self.picking_role is None and not self.radius_editing:
             self.view_frozen = False
         return "break"
 
@@ -851,6 +924,7 @@ class WebcamApp(ReviewTools):
         self.syncing_manual_guides = True
         try:
             for ring, (_, _, radius) in zip(self.ring_controls, NEWTONIAN_GUIDES):
+                ring.viewport_radius = float(radius)
                 ring.slider.set(radius)
         finally:
             self.syncing_manual_guides = False
@@ -860,7 +934,7 @@ class WebcamApp(ReviewTools):
         """Estimate missing manual rings; never report estimates as detections."""
         if not self.show_crosshair or self.display_transform is None:
             return
-        scale = self.display_transform.width / self.display_transform.crop_width
+        scale = self.display_transform.display_scale
         anchors = {}
         for index, ring in enumerate(self.ring_controls):
             edge = self.detection.candidate(self.selections.get(ring.name.get())) if self.detection else None
@@ -883,6 +957,7 @@ class WebcamApp(ReviewTools):
                     else:
                         nearest = min(anchors, key=lambda i: abs(index - i))
                         radius = anchors[nearest] * defaults[index] / defaults[nearest]
+                ring.viewport_radius = max(1, radius)
                 radius = max(1, round(radius))
                 ring.slider.config(to=max(400, radius))
                 ring.slider.set(radius)
@@ -895,9 +970,10 @@ class WebcamApp(ReviewTools):
         if self.syncing_manual_guides or self.notebook.select() != str(self.manual_panel):
             return
         role = ring.name.get()
+        ring.viewport_radius = float(ring.slider.get())
         self.manual_guide_edits.add(role)
         if role in self.selections and self.display_transform is not None:
-            scale = self.display_transform.width / self.display_transform.crop_width
+            scale = self.display_transform.display_scale
             edge = self.detection.candidate(self.selections[role])
             if ring.slider.get() == round(edge.radius * scale):
                 return
@@ -946,6 +1022,7 @@ class WebcamApp(ReviewTools):
     def refresh_cameras(self):
         if self.closing:
             return
+        self.stop_phone()
         self.session += 1
         self.source_mode = "camera"
         self.source_description = "Live camera"
@@ -957,30 +1034,41 @@ class WebcamApp(ReviewTools):
         self.worker.commands.put((self.session, "scan", None))
 
     def on_camera_selected(self, event):
+        if not self.closing and self.selected_camera.get() == PHONE_SOURCE:
+            self.select_phone()
+            return
         if self.closing or self.selected_camera.get() not in self.camera_list:
             return
         self.session += 1
         self.source_mode = "camera"
+        self.stop_phone()
         self.source_description = self.selected_camera.get()
         self.enable_camera_controls(False)
         self.clear_video()
         self.loading_label.config(text="Loading camera...")
-        camera_index = int(self.selected_camera.get().split()[-1])
+        camera_index = self.camera_devices[self.selected_camera.get()]
         self.worker.commands.put((self.session, "open", camera_index))
 
     def handle_camera_event(self, kind, data):
         if kind == "cameras":
-            previous = self.selected_camera.get()
-            self.camera_list = [f"Camera {index}" for index in data]
-            self.camera_dropdown.config(values=self.camera_list,
-                                        state="readonly" if self.camera_list else "disabled")
+            previous_index = self.camera_devices.get(self.selected_camera.get())
+            self.camera_devices = {}
+            for index, name in data:
+                name = " ".join(name.split())
+                label = f"{name} (Camera {index})" if name else f"Camera {index}"
+                self.camera_devices[label] = index
+            self.camera_list = list(self.camera_devices)
+            self.camera_dropdown.config(values=self.camera_list + [PHONE_SOURCE],
+                                        state="readonly")
             self.refresh_button.config(state="normal")
             if self.camera_list:
-                self.selected_camera.set(previous if previous in self.camera_list else self.camera_list[0])
+                previous = next((label for label, index in self.camera_devices.items()
+                                 if index == previous_index), self.camera_list[0])
+                self.selected_camera.set(previous)
                 self.on_camera_selected(None)
             else:
                 self.selected_camera.set("")
-                self.loading_label.config(text="No cameras found. Connect a camera and click Refresh cameras.")
+                self.loading_label.config(text="No cameras found. Choose Stream from the phone, or connect a camera and Refresh.")
         elif kind == "opened":
             values, capabilities = data
             self.camera_on = True
@@ -999,6 +1087,15 @@ class WebcamApp(ReviewTools):
             self.refresh_button.config(state="normal")
             self.loading_label.config(text=data)
 
+    def accept_live_frame(self, frame):
+        if self.tracking_active:
+            if not self.view_frozen and self.pan_anchor is None and not self.radius_editing and self.picking_role is None:
+                self.live_average.add(frame, monotonic())
+            self.tracking_pending_frame = frame
+        elif not self.view_frozen:
+            self.last_frame = frame
+            self.observations_current = False
+
     def update_frame(self):
         if self.closing:
             return
@@ -1012,38 +1109,32 @@ class WebcamApp(ReviewTools):
         try:
             session, frame = self.worker.frames.get_nowait()
             if session == self.session and self.camera_on:
-                if self.tracking_active:
-                    if not self.view_frozen and self.pan_anchor is None and not self.radius_editing and self.picking_role is None:
-                        self.live_average.add(frame, monotonic())
-                    self.tracking_pending_frame = frame
-                elif not self.view_frozen:
-                    self.last_frame = frame
-                    self.observations_current = False
+                self.accept_live_frame(frame)
         except Empty:
             pass
+        self.poll_phone()
         self.poll_analysis()
+        self.poll_vanes()
         self.maybe_track()
 
-        if self.last_frame is not None:
-            available_width = max(160, self.root.winfo_width() - self.sidebar.winfo_width() - 14)
-            available_height = max(120, self.root.winfo_height() - 14)
-            max_width, max_height = min(960, available_width), min(720, available_height)
+        if self.last_frame is not None and not self.phone_connection_visible:
+            max_width, max_height = self.viewport_limits()
             previous_transform = self.display_transform
-            self.display_transform = DisplayTransform.for_image(
-                (self.last_frame.shape[1], self.last_frame.shape[0]), self.zoom_factor,
-                max_width, max_height, self.view_center)
-            frame = prepare_frame(self.last_frame, self.zoom_factor, max_width, max_height, self.view_center)
+            self.display_transform = self.current_view_transform()
+            frame = prepare_frame(self.last_frame, self.zoom_factor, max_width, max_height, self.view_center,
+                                  self.crosshair_angles["optical"], self.display_transform.pivot, self.image_rotation_shift)
             height, width = frame.shape[:2]
             if previous_transform is not None and previous_transform != self.display_transform:
                 original_center = previous_transform.to_original((self.crosshair_x, self.crosshair_y))
                 self.crosshair_x, self.crosshair_y = (round(value) for value in
                                                      self.display_transform.to_display(original_center))
-                scale = ((self.display_transform.width / self.display_transform.crop_width) /
-                         (previous_transform.width / previous_transform.crop_width))
+                scale = ((self.display_transform.display_scale) /
+                         (previous_transform.display_scale))
                 self.syncing_manual_guides = True
                 try:
                     for ring in self.ring_controls:
-                        radius = round(ring.slider.get() * scale)
+                        ring.viewport_radius *= scale
+                        radius = round(ring.viewport_radius)
                         ring.slider.config(to=max(400, math.ceil(400 * self.zoom_factor), radius))
                         ring.slider.set(radius)
                 finally:
@@ -1055,28 +1146,33 @@ class WebcamApp(ReviewTools):
             if self.detection is not None and self.detection.guide_center is not None:
                 self.crosshair_x, self.crosshair_y = (round(v) for v in self.display_transform.to_display(self.detection.guide_center))
             self.sync_manual_guides()
-            # Optical guide markers stay above the independent FOV reference.
+            # FOV is independent; the white guide-center marker is drawn over circles.
             self.draw_fov_crosshair(frame, self.display_transform)
             if self.show_crosshair and self.overlays_shown():
                 center = (self.crosshair_x, self.crosshair_y)
                 for ring in self.ring_controls:
                     if ring.visible.get() and ring.name.get() not in self.selections:
-                        cv2.circle(frame, center, ring.slider.get(), ring.color, 1)
+                        cv2.circle(frame, center, ring.slider.get(), ring.color, 1, cv2.LINE_AA)
             if self.detection is not None and self.overlays_shown():
                 draw_detection(frame, self.visible_detection(), self.selections, self.confirmed,
                                self.display_transform, self.show_candidates.get(),
-                               self.selections.get(self.review_role.get()))
+                               self.selections.get(self.review_role.get()),
+                               crosshair_visible=False,
+                               crosshair_angle_deg=0,
+                               crosshair_blades=self.crosshair_blades.get())
+            self.draw_guide_center(frame, self.display_transform)
             for point in self.pick_points if self.overlays_shown() else ():
                 center = tuple(round(value) for value in self.display_transform.to_display(point))
-                cv2.drawMarker(frame, center, (255, 255, 255), cv2.MARKER_TILTED_CROSS, 10, 1)
+                cv2.drawMarker(frame, center, (255, 255, 255), cv2.MARKER_TILTED_CROSS, 10, 1, cv2.LINE_AA)
             img = ImageTk.PhotoImage(Image.fromarray(frame))
             self.video_label.config(image=img, text="")
             self.video_label.image = img
-        self.detect_button.config(state="normal" if self.last_frame is not None and not self.analysis_busy else "disabled")
+        self.detect_button.config(state="normal" if self.last_frame is not None and not self.analysis_busy and not self.phone_connection_visible else "disabled")
         self.after_id = self.root.after(30, self.update_frame)
 
     def on_closing(self):
         self.closing = True
+        self.stop_phone()
         for control in self.camera_controls.values():
             control.cancel_pending()
         if self.after_id is not None:

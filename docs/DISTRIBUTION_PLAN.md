@@ -1,6 +1,6 @@
 # Distribution plan — 2026-10-07
 
-Prepare Astro Collimator for sharing with Newtonian imagers. Keep runtime offline
+Prepare Advanced Astro Collimator for sharing with Newtonian imagers. Keep runtime offline
 and perform no Git operations. Preserve the existing integration scenarios and
 historical coverage references; this change does not complete coverage migration.
 
